@@ -1,0 +1,84 @@
+# -------------------- 1. 核心：字节码与编译产物 --------------------
+# 这些是Python运行时自动生成的，完全没必要提交
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# -------------------- 2. 虚拟环境 --------------------
+# 环境是本地的，文件很大，每个人都需要自己创建
+.env
+.venv
+env/
+venv/
+ENV/
+
+# -------------------- 3. 项目构建与打包产物 --------------------
+# 运行打包命令后生成的临时文件和最终安装包
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# -------------------- 4. 测试与代码覆盖率 --------------------
+# 各种测试框架生成的报告和缓存
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# -------------------- 5. 文档与笔记本临时文件 --------------------
+# Sphinx生成的文档，以及Jupyter Notebook的自动检查点
+docs/_build/
+.ipynb_checkpoints
+
+# -------------------- 6. 日志与数据库 --------------------
+# 运行时产生的日志文件和本地测试数据库
+*.log
+db.sqlite3
+db.sqlite3-journal
+logs
+
+# -------------------- 7. 敏感信息与本地配置 --------------------
+# 这些文件里可能包含密钥、密码等，绝对不能提交
+local_settings.py
+.python-version
+.pypirc
+
+# -------------------- 8. 开发者工具与IDE配置 --------------------
+# 通常个人IDE的配置不应影响团队，但可以根据团队规范选择性放开
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# -------------------- 9. 类型检查与代码规范工具 --------------------
+# 各种工具的本地缓存
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.ruff_cache/
+
+data

@@ -1,0 +1,53 @@
+automatic_annotation_node:
+  ros__parameters:
+    point_cloud_type: 0
+    target_accumulate_pc_num: 10
+    publish_accumulated_pc: false
+    origin_point_cloud_topic: "livox/pointcloud"
+    undistorted_point_cloud_topic: "lio/undistort_pc"
+    accumulate_pc_save_folder: "lidar_point_cloud_0"
+    # accumulate_pc_save_folder: "samples/LIDAR_TOP"
+
+    image_source_type: 1
+    image_save_interval: 1
+    left_image_topic: "camera/left/image"
+    right_image_topic: "camera/right/image"
+    left_camera_intrinsic_topic: "camera/left/intrinsic_matrix"
+    right_camera_intrinsic_topic: "camera/right/intrinsic_matrix"
+    left_camera_fig_save_folder: "camera_image_0"
+    # left_camera_fig_save_folder: "samples/CAM_FRONT_LEFT"
+    right_camera_fig_save_folder: "cam1"
+
+    auto_annotation: true
+    save_raw_image: true
+    save_synced_pcd: true
+    generate_depth_map: true
+    generate_semantic_mask: false
+    generate_kitti_label: true
+    generate_nusc_label: false
+    generate_xtreme1_json: true
+    enable_visual_verify: true
+    global_pc_map_addr: "/home/keyaoli/Data/AutoAnnotation/MapAnnotation/yx_20260327/velodyne_points/data/colored_lidar_merged.pcd"
+    pc_annotation_file_addr: "/home/keyaoli/Data/AutoAnnotation/MapAnnotation/yx_20260327/tracklet_labels.xml"
+
+    custom_record_folder_name: ""   # 为了自动化脚本可以传入scene标识
+
+    tf_wait_timeout_sec: 2.0
+    # 外参默认值格式: [x(米), y(米), z(米), roll(度), pitch(度), yaw(度)]
+    # 以下值由 C++ 日志精准提取，完美匹配 tf_static 的四元数
+    # baoli
+    # default_tf_lcam_to_lidar: [0.070, 0.116, 0.071, -126.100, -1.000, -91.300]
+    default_tf_rcam_to_lidar: [0.070, -0.116, 0.071, -125.700, 0.500, -88.500]
+    # default_tf_lidar_to_ins: [-0.347, 0.000, 1.277, -0.981, -0.378, -1.315]
+    # yenan
+    # default_tf_lcam_to_lidar: [0.070000, 0.115999, 0.071299, -122.87, -0.20, -89.00]
+    # default_tf_lidar_to_ins: [-0.336825, 0.004557, 1.299241, 1.88, -0.01, -2.60]
+    # binjiang
+    # default_tf_lcam_to_lidar: [0.070000, 0.115999, 0.071299, -122.60, -0.80, -91.78]
+    # default_tf_lidar_to_ins: [-0.336825, 0.004557, 1.299241, 0.03, 1.11, -1.66]
+    # xiangxue 
+    # default_tf_lcam_to_lidar: [0.070000, 0.115999, 0.071299, -121.70, -1.80, -90.50]
+    # default_tf_lidar_to_ins: [-0.336825, 0.004557, 1.299241, 0.09, -0.72, 0.64]
+    # 隐秀25
+    default_tf_lcam_to_lidar: [0.070000, 0.115999, 0.071299, -124.10, -0.00, -89.70]
+    default_tf_lidar_to_ins: [-0.336825, 0.004557, 1.299241, -0.03, -1.17, -3.23]
