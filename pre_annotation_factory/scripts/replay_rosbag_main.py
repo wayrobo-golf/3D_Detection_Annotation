@@ -20,10 +20,10 @@ from scipy.spatial.transform import Rotation as R
 
 # ================= 配置区 =================
 # 1. 你的工程工作空间绝对路径
-WORKSPACE_PATH = "/home/keyaoli/Code/Wayrobo/Robot" 
+WORKSPACE_PATH = "/home/keyaoli/Code/Wayrobo/3D_Detection_Annotation"
 
 # 2. 存放所有 bag 的根目录
-# TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/BaoLi20260305"
+TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/BaoLi20260305"
 # TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/BaoLi20260305_Debug"
 # TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/XiangXue20260323"
 # TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/XiangXue20260323_Debug"
@@ -31,13 +31,13 @@ WORKSPACE_PATH = "/home/keyaoli/Code/Wayrobo/Robot"
 # TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/YeNan20260318_Debug"
 # TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/Binjiang20260319"
 # TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/Binjiang20260319_Debug"
-TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/YinXiu20260327"
+# TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/YinXiu20260327"
 
 # 3. QoS 文件的绝对路径
 QOS_YAML_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/rosbag_play_qos_cfg.yaml"
 
 # 4. 参数配置文件 (default.yaml) 的绝对路径
-YAML_CONFIG_PATH = "/home/keyaoli/Code/Wayrobo/Robot/fusion_localization/automatic_annotation/config/default.yaml"
+YAML_CONFIG_PATH = "/home/keyaoli/Code/Wayrobo/3D_Detection_Annotation/automatic_annotation/config/default.yaml"
 
 PACKAGE_NAME = "automatic_annotation"
 NODE_NAME = "automatic_annotation_node"
@@ -50,7 +50,7 @@ GENERATE_KITTI_DATASET = False
 KITTI_OUTPUT_DIR = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_KITTI_Dataset/Debug"
 
 # Xtreme1 输出路径
-XTREME1_OUTPUT_DIR = "/home/keyaoli/Data/AutoAnnotation/DataRecord/YinXiu20260327/Xtreme1_Upload"
+XTREME1_OUTPUT_DIR = "/home/keyaoli/Data/AutoAnnotation/DataRecord/BaoLi20260305/Xtreme1_Upload"
 
 SPLIT_RATIO = 0.8         # 80% 划入 train.txt, 20% 划入 val.txt
 CONVERT_PCD_TO_BIN = True # 是否自动将点云转为 OpenPCDet 必须的 bin 格式 (仅在 GENERATE_KITTI_DATASET=True 时有效)
@@ -58,7 +58,7 @@ RANDOM_SEED = 42
 
 # 是否在转换打包完成后，彻底删除 ROS2 install/share 目录下的原始生成数据
 CLEANUP_SHARE_DATA = False 
-RAW_DATA_ARCHIVE_DIR = "/home/keyaoli/Code/Wayrobo/Robot/install/automatic_annotation/share/automatic_annotation/data/history"
+RAW_DATA_ARCHIVE_DIR = "/home/keyaoli/Code/Wayrobo/3D_Detection_Annotation/install/automatic_annotation/share/automatic_annotation/data/history"
 MAX_EMPTY_FRAME_RATIO = 0.1 # 0.1 表示空帧数量最多为有目标帧数量的 10%
 # ==========================================================
 

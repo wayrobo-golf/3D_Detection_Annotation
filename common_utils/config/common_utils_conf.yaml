@@ -1,0 +1,7 @@
+redis_ip: 172.31.31.4
+redis_port: 6379
+influx_host: 127.0.0.1
+influx_port: 8086
+influx_usr: wayrobo
+influx_pswd: wayrobo123
+influx_db: golf_robot

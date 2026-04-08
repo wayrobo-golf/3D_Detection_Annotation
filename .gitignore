@@ -82,3 +82,10 @@ dmypy.json
 .ruff_cache/
 
 data
+
+log
+build
+install
+*/log
+*/build
+*/install

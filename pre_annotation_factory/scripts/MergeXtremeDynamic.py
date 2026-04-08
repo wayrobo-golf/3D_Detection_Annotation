@@ -24,7 +24,7 @@ except ImportError:
 XTREME_EXPORT_ROOT = Path("/home/keyaoli/Data/AutoAnnotation/Xtreme/ExportFromXtreme/BaoLi_20260305-20260402122402")
 
 # 2. 你的原始数据集归档目录 (_origin 后缀的那个文件夹)
-RAW_ARCHIVE_ROOT = Path("/home/keyaoli/Data/3DBox_Annotation_20260401143738_BaoLi_20260305_origin")
+RAW_ARCHIVE_ROOT = Path("/home/keyaoli/Data/AutoAnnotation/Auto_Annotation_Origin/3DBox_Annotation_20260407181828_BaoLi_20260305_origin")
 
 # 3. 最终训练集输出目录
 FINAL_KITTI_OUTPUT_DIR = Path("/home/keyaoli/Data/AutoAnnotation/Wayrobo_KITTI_Dataset/Debug")
@@ -75,14 +75,32 @@ def generate_calib(config_path, out_calib):
 def pcd_to_bin_fixed(pcd_path, bin_path):
     try:
         with open(pcd_path, 'rb') as f:
+            num_fields = 4  # 默认兜底为 4 维
             while True:
                 line = f.readline().decode('ascii', errors='ignore').strip()
-                if line.startswith('DATA binary'): break
+                
+                # 【新增】动态解析 PCD 的字段维度
+                if line.startswith('FIELDS'):
+                    # FIELDS x y z intensity timestamp -> 切片后减去开头的'FIELDS'
+                    num_fields = len(line.split()) - 1 
+                
+                if line.startswith('DATA binary'): 
+                    break
                 if not line: return False
+                
+            # 读取二进制数据
             data = np.fromfile(f, dtype=np.float32)
-        points = data.reshape(-1, 4)
+            
+        # 【修改】使用动态解析出的维度进行 reshape (自动兼容 4维 或 5维)
+        points = data.reshape(-1, num_fields)
+        
+        # 保存为 bin
         points.tofile(bin_path)
         return True
+        
+    except ValueError as ve:
+        print(f"  [Error] 维度匹配失败 {pcd_path}: {ve} (解析到的维度数: {num_fields})")
+        return False
     except Exception as e:
         print(f"  [Error] 转换 PCD 失败 {pcd_path}: {e}")
         return False

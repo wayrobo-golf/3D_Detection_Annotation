@@ -14,11 +14,16 @@
 #include <string>
 #include <vector>
 namespace automatic_annotation {
-GenPromptPoint::GenPromptPoint(const rclcpp::Node::SharedPtr& node) : node_(node) {
-  callback_group_lidar_ = node_->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
-  callback_group_camera_ = node_->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
-  INFO("AutoAnnotation GenPromptPoint constructor called, Version {}", ConstValue::kVersion);
-  package_share_path_ = ament_index_cpp::get_package_share_directory(ConstValue::kPackageName);
+GenPromptPoint::GenPromptPoint(const rclcpp::Node::SharedPtr& node)
+    : node_(node) {
+  callback_group_lidar_ = node_->create_callback_group(
+      rclcpp::CallbackGroupType::MutuallyExclusive);
+  callback_group_camera_ = node_->create_callback_group(
+      rclcpp::CallbackGroupType::MutuallyExclusive);
+  INFO("AutoAnnotation GenPromptPoint constructor called, Version {}",
+       ConstValue::kVersion);
+  package_share_path_ =
+      ament_index_cpp::get_package_share_directory(ConstValue::kPackageName);
   INFO("Package path: {}", package_share_path_);
   InitConfigFromParamsServer();
   InitClassMappingAndReflact();
@@ -41,96 +46,131 @@ void GenPromptPoint::InitConfigFromParamsServer() {
 
 void GenPromptPoint::InitGlobalMapAndLabelAddr() {
   node_config_.global_pc_map_addr =
-      get_param_value_form_params_server<std::string>("global_pc_map_addr", ConstValue::kDefaultGlobalPCMapAddr);
-  node_config_.pc_annotation_file_addr = get_param_value_form_params_server<std::string>(
-      "pc_annotation_file_addr", ConstValue::kDefaultPCAnnotationFileAddr);
+      get_param_value_form_params_server<std::string>(
+          "global_pc_map_addr", ConstValue::kDefaultGlobalPCMapAddr);
+  node_config_.pc_annotation_file_addr =
+      get_param_value_form_params_server<std::string>(
+          "pc_annotation_file_addr", ConstValue::kDefaultPCAnnotationFileAddr);
 }
 
 void GenPromptPoint::InitPointCloudTopic() {
-  node_config_.point_cloud_type =
-      get_param_value_form_params_server<int64_t>("point_cloud_type", ConstValue::kPointCloudTypeOriginal);
+  node_config_.point_cloud_type = get_param_value_form_params_server<int64_t>(
+      "point_cloud_type", ConstValue::kPointCloudTypeOriginal);
   if (node_config_.point_cloud_type == 0) {
     annotation_status_.pc_type = AutoAnnotationStatus::PointCloudType::Original;
-    node_config_.point_cloud_topic = get_param_value_form_params_server<std::string>(
-        "origin_point_cloud_topic", ConstValue::kDefaultOriginPointCloudTopic);
+    node_config_.point_cloud_topic =
+        get_param_value_form_params_server<std::string>(
+            "origin_point_cloud_topic",
+            ConstValue::kDefaultOriginPointCloudTopic);
   } else if (node_config_.point_cloud_type == 1) {
-    annotation_status_.pc_type = AutoAnnotationStatus::PointCloudType::Undistorted;
-    node_config_.point_cloud_topic = get_param_value_form_params_server<std::string>(
-        "undistorted_point_cloud_topic", ConstValue::kDefaultUndistortedPointCloudTopic);
+    annotation_status_.pc_type =
+        AutoAnnotationStatus::PointCloudType::Undistorted;
+    node_config_.point_cloud_topic =
+        get_param_value_form_params_server<std::string>(
+            "undistorted_point_cloud_topic",
+            ConstValue::kDefaultUndistortedPointCloudTopic);
   } else {
-    ERROR("Invalid point_cloud_type: {}. Must be 0 or 1.", node_config_.point_cloud_type);
+    ERROR("Invalid point_cloud_type: {}. Must be 0 or 1.",
+          node_config_.point_cloud_type);
     throw std::invalid_argument("Invalid point_cloud_type");
   }
 }
 
 void GenPromptPoint::InitPointCloudSettings() {
   node_config_.target_accumulate_pc_num =
-      get_param_value_form_params_server<int64_t>("target_accumulate_pc_num", ConstValue::kTargetPointCloudAccumulate);
+      get_param_value_form_params_server<int64_t>(
+          "target_accumulate_pc_num", ConstValue::kTargetPointCloudAccumulate);
   node_config_.publish_accumulated_pc =
-      get_param_value_form_params_server<bool>("publish_accumulated_pc", ConstValue::kDefaultPublishAccumulatedPC);
+      get_param_value_form_params_server<bool>(
+          "publish_accumulated_pc", ConstValue::kDefaultPublishAccumulatedPC);
 }
 
 void GenPromptPoint::InitImageSettings() {
-  node_config_.image_source_type =
-      get_param_value_form_params_server<int64_t>("image_source_type", ConstValue::kImageSourceLeftCamera);
+  node_config_.image_source_type = get_param_value_form_params_server<int64_t>(
+      "image_source_type", ConstValue::kImageSourceLeftCamera);
   node_config_.image_save_interval =
-      get_param_value_form_params_server<int64_t>("image_save_interval", ConstValue::kDefaultImageSaveInterval);
+      get_param_value_form_params_server<int64_t>(
+          "image_save_interval", ConstValue::kDefaultImageSaveInterval);
 }
 
 void GenPromptPoint::InitCameraTopics() {
   node_config_.left_image_topic =
-      get_param_value_form_params_server<std::string>("left_image_topic", ConstValue::kDefaultLeftImageTopic);
+      get_param_value_form_params_server<std::string>(
+          "left_image_topic", ConstValue::kDefaultLeftImageTopic);
   node_config_.right_image_topic =
-      get_param_value_form_params_server<std::string>("right_image_topic", ConstValue::kDefaultRightImageTopic);
+      get_param_value_form_params_server<std::string>(
+          "right_image_topic", ConstValue::kDefaultRightImageTopic);
 }
 
 void GenPromptPoint::InitCameraIntrinsicsTopics() {
-  node_config_.left_camera_intrinsic_topic = get_param_value_form_params_server<std::string>(
-      "left_camera_intrinsic_topic", ConstValue::kDefaultLeftCameraIntrinsicTopic);
+  node_config_.left_camera_intrinsic_topic =
+      get_param_value_form_params_server<std::string>(
+          "left_camera_intrinsic_topic",
+          ConstValue::kDefaultLeftCameraIntrinsicTopic);
 
-  node_config_.right_camera_intrinsic_topic = get_param_value_form_params_server<std::string>(
-      "right_camera_intrinsic_topic", ConstValue::kDefaultRightCameraIntrinsicTopic);
+  node_config_.right_camera_intrinsic_topic =
+      get_param_value_form_params_server<std::string>(
+          "right_camera_intrinsic_topic",
+          ConstValue::kDefaultRightCameraIntrinsicTopic);
 }
 
 void GenPromptPoint::InitAutoAnnotation() {
-  node_config_.auto_annotation =
-      get_param_value_form_params_server<bool>("auto_annotation", ConstValue::kDefaultAutoAnnotation);
-  node_config_.save_raw_image = get_param_value_form_params_server<bool>("save_raw_image", true);
-  node_config_.save_synced_pcd = get_param_value_form_params_server<bool>("save_synced_pcd", true);
-  node_config_.generate_depth_map = get_param_value_form_params_server<bool>("generate_depth_map", false);
-  node_config_.generate_semantic_mask = get_param_value_form_params_server<bool>("generate_semantic_mask", false);
-  node_config_.generate_kitti_label = get_param_value_form_params_server<bool>("generate_kitti_label", true);
-  node_config_.generate_nusc_label = get_param_value_form_params_server<bool>("generate_nusc_label", false);
-  node_config_.generate_xtreme1_json = get_param_value_form_params_server<bool>("generate_xtreme1_json", false);
-  node_config_.enable_visual_verify = get_param_value_form_params_server<bool>("enable_visual_verify", false);
+  node_config_.auto_annotation = get_param_value_form_params_server<bool>(
+      "auto_annotation", ConstValue::kDefaultAutoAnnotation);
+  node_config_.save_raw_image =
+      get_param_value_form_params_server<bool>("save_raw_image", true);
+  node_config_.save_synced_pcd =
+      get_param_value_form_params_server<bool>("save_synced_pcd", true);
+  node_config_.generate_depth_map =
+      get_param_value_form_params_server<bool>("generate_depth_map", false);
+  node_config_.generate_semantic_mask =
+      get_param_value_form_params_server<bool>("generate_semantic_mask", false);
+  node_config_.generate_kitti_label =
+      get_param_value_form_params_server<bool>("generate_kitti_label", true);
+  node_config_.generate_nusc_label =
+      get_param_value_form_params_server<bool>("generate_nusc_label", false);
+  node_config_.generate_xtreme1_json =
+      get_param_value_form_params_server<bool>("generate_xtreme1_json", false);
+  node_config_.enable_visual_verify =
+      get_param_value_form_params_server<bool>("enable_visual_verify", false);
 }
 
 void GenPromptPoint::InitDefaultTfSettings() {
-  node_config_.tf_wait_timeout_sec =
-      get_param_value_form_params_server<double>("tf_wait_timeout_sec", ConstValue::kDefaultTfWaitTimeoutSec);
+  node_config_.tf_wait_timeout_sec = get_param_value_form_params_server<double>(
+      "tf_wait_timeout_sec", ConstValue::kDefaultTfWaitTimeoutSec);
 
   std::vector<double> zeros = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
 
   // 左相机 -> 雷达
-  auto lcam_vec = get_param_value_form_params_server<std::vector<double>>("default_tf_lcam_to_lidar", zeros);
+  auto lcam_vec = get_param_value_form_params_server<std::vector<double>>(
+      "default_tf_lcam_to_lidar", zeros);
   node_config_.default_isometry_lcam2lidar = ConvertXYZRPYToIsometry(lcam_vec);
-  annotation_status_.isometry_lcam2lidar = node_config_.default_isometry_lcam2lidar;
+  annotation_status_.isometry_lcam2lidar =
+      node_config_.default_isometry_lcam2lidar;
 
   // 右相机 -> 雷达
-  auto rcam_vec = get_param_value_form_params_server<std::vector<double>>("default_tf_rcam_to_lidar", zeros);
+  auto rcam_vec = get_param_value_form_params_server<std::vector<double>>(
+      "default_tf_rcam_to_lidar", zeros);
   node_config_.default_isometry_rcam2lidar = ConvertXYZRPYToIsometry(rcam_vec);
-  annotation_status_.isometry_rcam2lidar = node_config_.default_isometry_rcam2lidar;
+  annotation_status_.isometry_rcam2lidar =
+      node_config_.default_isometry_rcam2lidar;
 
   // 雷达 -> 车体
-  auto lidar2ins_vec = get_param_value_form_params_server<std::vector<double>>("default_tf_lidar_to_ins", zeros);
-  node_config_.default_isometry_lidar2ins = ConvertXYZRPYToIsometry(lidar2ins_vec);
-  annotation_status_.isometry_lidar2ins = node_config_.default_isometry_lidar2ins;
+  auto lidar2ins_vec = get_param_value_form_params_server<std::vector<double>>(
+      "default_tf_lidar_to_ins", zeros);
+  node_config_.default_isometry_lidar2ins =
+      ConvertXYZRPYToIsometry(lidar2ins_vec);
+  annotation_status_.isometry_lidar2ins =
+      node_config_.default_isometry_lidar2ins;
 }
 
-Eigen::Isometry3d GenPromptPoint::ConvertXYZRPYToIsometry(const std::vector<double>& params) {
+Eigen::Isometry3d GenPromptPoint::ConvertXYZRPYToIsometry(
+    const std::vector<double>& params) {
   Eigen::Isometry3d iso = Eigen::Isometry3d::Identity();
   if (params.size() != 6) {
-    ERROR("Default TF params size must be 6 (x, y, z, roll, pitch, yaw). Using Identity Matrix.");
+    ERROR(
+        "Default TF params size must be 6 (x, y, z, roll, pitch, yaw). Using "
+        "Identity Matrix.");
     return iso;
   }
 
@@ -153,49 +193,69 @@ Eigen::Isometry3d GenPromptPoint::ConvertXYZRPYToIsometry(const std::vector<doub
 }
 
 void GenPromptPoint::InitSaveFolder() {
-  std::string custom_folder_name = get_param_value_form_params_server<std::string>("custom_record_folder_name", "");
+  std::string custom_folder_name =
+      get_param_value_form_params_server<std::string>(
+          "custom_record_folder_name", "");
   std::string data_record_folder;
   if (custom_folder_name.empty()) {
     // 如果没有传入，就按原来的逻辑用时间戳命名
     data_record_folder = "data/data_record_" + get_current_localtime_str();
-    INFO("No custom folder name provided. Using default folder name: {}", data_record_folder);
+    INFO("No custom folder name provided. Using default folder name: {}",
+         data_record_folder);
   } else {
     // 如果传入了，就用传入的名字（比如 Bag 的名字）
-    data_record_folder = "data/data_record_" + get_current_localtime_str() + "/" + custom_folder_name;
-    INFO("Custom folder name provided: {}. Using folder name: {}", custom_folder_name, data_record_folder);
+    data_record_folder = "data/data_record_" + get_current_localtime_str() +
+                         "/" + custom_folder_name;
+    INFO("Custom folder name provided: {}. Using folder name: {}",
+         custom_folder_name, data_record_folder);
   }
   std::filesystem::path package_share_path(package_share_path_);
   std::filesystem::path data_record_relative_folder(data_record_folder);
-  std::filesystem::path data_record_folder_path = package_share_path / data_record_relative_folder;
+  std::filesystem::path data_record_folder_path =
+      package_share_path / data_record_relative_folder;
   // 从ROS参数服务器获取存储路径 (相对于功能包share文件夹的相对路径)
   annotation_status_.data_record_root_folder = data_record_folder_path.string();
-  node_config_.left_camera_save_folder = get_param_value_form_params_server<std::string>(
-      "left_camera_fig_save_folder", ConstValue::kDefaultLeftCameraFigSaveFolder);
-  node_config_.right_camera_save_folder = get_param_value_form_params_server<std::string>(
-      "right_camera_fig_save_folder", ConstValue::kDefaultRightCameraFigSaveFolder);
-  node_config_.accumulate_pc_save_folder = get_param_value_form_params_server<std::string>(
-      "accumulate_pc_save_folder", ConstValue::kDefaultAccumulatePointCloudSaveFolder);
+  node_config_.left_camera_save_folder =
+      get_param_value_form_params_server<std::string>(
+          "left_camera_fig_save_folder",
+          ConstValue::kDefaultLeftCameraFigSaveFolder);
+  node_config_.right_camera_save_folder =
+      get_param_value_form_params_server<std::string>(
+          "right_camera_fig_save_folder",
+          ConstValue::kDefaultRightCameraFigSaveFolder);
+  node_config_.accumulate_pc_save_folder =
+      get_param_value_form_params_server<std::string>(
+          "accumulate_pc_save_folder",
+          ConstValue::kDefaultAccumulatePointCloudSaveFolder);
   // 通过文件系统确认路径存在及其权限
-  std::filesystem::path accumulate_pc_save_relative_folder(node_config_.accumulate_pc_save_folder);
-  std::filesystem::path accumulate_pc_save_folder = data_record_folder_path / accumulate_pc_save_relative_folder;
+  std::filesystem::path accumulate_pc_save_relative_folder(
+      node_config_.accumulate_pc_save_folder);
+  std::filesystem::path accumulate_pc_save_folder =
+      data_record_folder_path / accumulate_pc_save_relative_folder;
   if (EnsureDirectoryWithFullPermissions(accumulate_pc_save_folder)) {
-    annotation_status_.accumulate_pc_save_folder = accumulate_pc_save_folder.string();
+    annotation_status_.accumulate_pc_save_folder =
+        accumulate_pc_save_folder.string();
   } else {
-    throw std::runtime_error("Unable to get full permission for saving point cloud");
+    throw std::runtime_error(
+        "Unable to get full permission for saving point cloud");
   }
 
-  if (node_config_.image_source_type & (1 << ConstValue::kImageSourceLeftCamera)) {
+  if (node_config_.image_source_type &
+      (1 << ConstValue::kImageSourceLeftCamera)) {
     INFO("Checking if left_camera_save_folder is useable.");
-    std::filesystem::path left_original_image_save_relative_folder(node_config_.left_camera_save_folder);
+    std::filesystem::path left_original_image_save_relative_folder(
+        node_config_.left_camera_save_folder);
     std::filesystem::path left_fuse_image_save_relative_folder("fuse_image");
     std::filesystem::path left_depth_image_save_relative_folder("depth_image");
-    std::filesystem::path left_semantic_image_save_relative_folder("semantic_image");
+    std::filesystem::path left_semantic_image_save_relative_folder(
+        "semantic_image");
     std::filesystem::path left_label_save_relative_folder("label_2");
 
     std::filesystem::path left_original_image_save_folder =
         data_record_folder_path / left_original_image_save_relative_folder;
 
-    std::filesystem::path left_fuse_image_save_folder = data_record_folder_path / left_fuse_image_save_relative_folder;
+    std::filesystem::path left_fuse_image_save_folder =
+        data_record_folder_path / left_fuse_image_save_relative_folder;
 
     std::filesystem::path left_depth_image_save_folder =
         data_record_folder_path / left_depth_image_save_relative_folder;
@@ -203,29 +263,40 @@ void GenPromptPoint::InitSaveFolder() {
     std::filesystem::path left_semantic_image_save_folder =
         data_record_folder_path / left_semantic_image_save_relative_folder;
 
-    std::filesystem::path left_label_save_folder = data_record_folder_path / left_label_save_relative_folder;
+    std::filesystem::path left_label_save_folder =
+        data_record_folder_path / left_label_save_relative_folder;
 
     if (EnsureDirectoryWithFullPermissions(left_original_image_save_folder) &&
         EnsureDirectoryWithFullPermissions(left_fuse_image_save_folder) &&
         EnsureDirectoryWithFullPermissions(left_depth_image_save_folder) &&
         EnsureDirectoryWithFullPermissions(left_semantic_image_save_folder) &&
         EnsureDirectoryWithFullPermissions(left_label_save_folder)) {
-      annotation_status_.left_original_image_save_folder = left_original_image_save_folder.string();
-      annotation_status_.left_fuse_image_save_folder = left_fuse_image_save_folder.string();
-      annotation_status_.left_depth_image_save_folder = left_depth_image_save_folder.string();
-      annotation_status_.left_semantic_image_save_folder = left_semantic_image_save_folder.string();
-      annotation_status_.left_label_save_folder = left_label_save_folder.string();
+      annotation_status_.left_original_image_save_folder =
+          left_original_image_save_folder.string();
+      annotation_status_.left_fuse_image_save_folder =
+          left_fuse_image_save_folder.string();
+      annotation_status_.left_depth_image_save_folder =
+          left_depth_image_save_folder.string();
+      annotation_status_.left_semantic_image_save_folder =
+          left_semantic_image_save_folder.string();
+      annotation_status_.left_label_save_folder =
+          left_label_save_folder.string();
     } else {
-      throw std::runtime_error("Unable to get full permission for saving image");
+      throw std::runtime_error(
+          "Unable to get full permission for saving image");
     }
   }
 
-  if (node_config_.image_source_type & (1 << ConstValue::kImageSourceRightCamera)) {
+  if (node_config_.image_source_type &
+      (1 << ConstValue::kImageSourceRightCamera)) {
     INFO("Checking if right_camera_save_folder is useable.");
-    std::filesystem::path right_original_image_save_relative_folder(node_config_.right_camera_save_folder);
+    std::filesystem::path right_original_image_save_relative_folder(
+        node_config_.right_camera_save_folder);
     std::filesystem::path right_fuse_image_save_relative_folder("/fuse_image");
-    std::filesystem::path right_depth_image_save_relative_folder("/depth_image");
-    std::filesystem::path right_semantic_image_save_relative_folder("/semantic_image");
+    std::filesystem::path right_depth_image_save_relative_folder(
+        "/depth_image");
+    std::filesystem::path right_semantic_image_save_relative_folder(
+        "/semantic_image");
 
     std::filesystem::path right_original_image_save_folder =
         data_record_folder_path / right_original_image_save_relative_folder;
@@ -239,17 +310,23 @@ void GenPromptPoint::InitSaveFolder() {
         EnsureDirectoryWithFullPermissions(right_fuse_image_save_folder) &&
         EnsureDirectoryWithFullPermissions(right_depth_image_save_folder) &&
         EnsureDirectoryWithFullPermissions(right_semantic_image_save_folder)) {
-      annotation_status_.right_original_image_save_folder = right_original_image_save_folder.string();
-      annotation_status_.right_fuse_image_save_folder = right_fuse_image_save_folder.string();
-      annotation_status_.right_depth_image_save_folder = right_depth_image_save_folder.string();
-      annotation_status_.right_semantic_image_save_folder = right_semantic_image_save_folder.string();
+      annotation_status_.right_original_image_save_folder =
+          right_original_image_save_folder.string();
+      annotation_status_.right_fuse_image_save_folder =
+          right_fuse_image_save_folder.string();
+      annotation_status_.right_depth_image_save_folder =
+          right_depth_image_save_folder.string();
+      annotation_status_.right_semantic_image_save_folder =
+          right_semantic_image_save_folder.string();
     } else {
-      throw std::runtime_error("Unable to get full permission for saving image");
+      throw std::runtime_error(
+          "Unable to get full permission for saving image");
     }
   }
 }
 
-bool GenPromptPoint::EnsureDirectoryWithFullPermissions(const std::filesystem::path& dir_path) {
+bool GenPromptPoint::EnsureDirectoryWithFullPermissions(
+    const std::filesystem::path& dir_path) {
   namespace fs = std::filesystem;
   try {
     // 检查目录是否存在
@@ -268,7 +345,8 @@ bool GenPromptPoint::EnsureDirectoryWithFullPermissions(const std::filesystem::p
 
       if (!has_full_perms) {
         // 设置全部权限
-        fs::permissions(dir_path, fs::perms::all, fs::perm_options::add | fs::perm_options::nofollow);
+        fs::permissions(dir_path, fs::perms::all,
+                        fs::perm_options::add | fs::perm_options::nofollow);
         INFO("add all permissions for dir_path.");
       } else {
         INFO("dir_path is exists and have all permissions.");
@@ -281,7 +359,8 @@ bool GenPromptPoint::EnsureDirectoryWithFullPermissions(const std::filesystem::p
       }
 
       // 为新创建的目录设置全部权限
-      fs::permissions(dir_path, fs::perms::all, fs::perm_options::replace | fs::perm_options::nofollow);
+      fs::permissions(dir_path, fs::perms::all,
+                      fs::perm_options::replace | fs::perm_options::nofollow);
       INFO("get all permission for dir_path.");
     }
 
@@ -327,7 +406,9 @@ void GenPromptPoint::InitClassMappingAndReflact() {
  */
 void GenPromptPoint::InitMapAndLabel() {
   if (!node_config_.auto_annotation) {
-    INFO("User select do not excute auto annotation, the map and label will not be loaded.");
+    INFO(
+        "User select do not excute auto annotation, the map and label will not "
+        "be loaded.");
     return;
   }
   // 1. 加载全局 PCD 地图
@@ -338,10 +419,13 @@ void GenPromptPoint::InitMapAndLabel() {
       INFO("Loading global map from: {}", map_path.string());
 
       // 创建 PointXYZ 类型的指针
-      pcl::PointCloud<pcl::PointXYZ>::Ptr temp_map(new pcl::PointCloud<pcl::PointXYZ>);
+      pcl::PointCloud<pcl::PointXYZ>::Ptr temp_map(
+          new pcl::PointCloud<pcl::PointXYZ>);
 
-      // PCL 会自动加载 x,y,z 并忽略文件中的 rgb 字段，也不会因为找不到 intensity 而报错
-      if (pcl::io::loadPCDFile<pcl::PointXYZ>(map_path.string(), *temp_map) == -1) {
+      // PCL 会自动加载 x,y,z 并忽略文件中的 rgb 字段，也不会因为找不到
+      // intensity 而报错
+      if (pcl::io::loadPCDFile<pcl::PointXYZ>(map_path.string(), *temp_map) ==
+          -1) {
         ERROR("Failed to read PCD file: {}", map_path.string());
       } else {
         // 设置 Frame ID (重要：用于后续 TF 变换)
@@ -349,7 +433,8 @@ void GenPromptPoint::InitMapAndLabel() {
 
         // 存入 annotation_status_
         annotation_status_.global_map = temp_map;
-        INFO("Global map loaded successfully. Size: {} points.", temp_map->size());
+        INFO("Global map loaded successfully. Size: {} points.",
+             temp_map->size());
       }
     } else {
       WARN("Global map path does not exist: {}", map_path.string());
@@ -372,7 +457,8 @@ void GenPromptPoint::InitMapAndLabel() {
     INFO("Annotation file address parameter is empty.");
   }
 
-  if (annotation_status_.global_map && !annotation_status_.current_labels.empty()) {
+  if (annotation_status_.global_map &&
+      !annotation_status_.current_labels.empty()) {
     // ExtractCloudsFromBoxes();
   }
 }
@@ -386,10 +472,16 @@ void GenPromptPoint::InitPublishAndSubscription() {
 
 void GenPromptPoint::CreateAccumulatePointCloudPublisher() {
   if (node_config_.publish_accumulated_pc) {
-    INFO("Configured to publish accumulated point cloud, initializing publisher.");
-    accumulated_pc_pub_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>("debug/accumulated_pc", 1);
+    INFO(
+        "Configured to publish accumulated point cloud, initializing "
+        "publisher.");
+    accumulated_pc_pub_ =
+        node_->create_publisher<sensor_msgs::msg::PointCloud2>(
+            "debug/accumulated_pc", 1);
   } else {
-    INFO("Not configured to publish accumulated point cloud, skipping publisher initialization.");
+    INFO(
+        "Not configured to publish accumulated point cloud, skipping publisher "
+        "initialization.");
   }
 }
 
@@ -403,15 +495,18 @@ void GenPromptPoint::CreatePointCloudSubscription() {
     INFO("Initialize queue_original");
     annotation_status_.queue_original.clear();
     // 创建订阅
-    INFO("Subscribing to original point cloud topic: {}", node_config_.point_cloud_topic);
+    INFO("Subscribing to original point cloud topic: {}",
+         node_config_.point_cloud_topic);
     pointcloud_sub_ = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
-        node_config_.point_cloud_topic, rclcpp::SensorDataQoS().keep_last(ConstValue::kLidarQueueSize),
+        node_config_.point_cloud_topic,
+        rclcpp::SensorDataQoS().keep_last(ConstValue::kLidarQueueSize),
         [this](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
           auto pcl_cloud = this->ConvertMsgToPCLPointCloud<LivoxPoint>(msg);
           if (pcl_cloud) {
             // 去运动畸变(暂不实现)
             // 累积点云
-            AccumulatePointCloudBack<LivoxPoint>(pcl_cloud, annotation_status_.queue_original, msg->header);
+            AccumulatePointCloudBack<LivoxPoint>(
+                pcl_cloud, annotation_status_.queue_original, msg->header);
           }
         },
         options);
@@ -420,22 +515,26 @@ void GenPromptPoint::CreatePointCloudSubscription() {
     INFO("Initialize queue_undistorted");
     annotation_status_.queue_undistorted.clear();
     // 创建订阅
-    INFO("Subscribing to undistorted point cloud topic: {}", node_config_.point_cloud_topic);
-    auto custom_qos = rclcpp::QoS(rclcpp::KeepLast(ConstValue::kUndistortedLidarQueueSize));
+    INFO("Subscribing to undistorted point cloud topic: {}",
+         node_config_.point_cloud_topic);
+    auto custom_qos =
+        rclcpp::QoS(rclcpp::KeepLast(ConstValue::kUndistortedLidarQueueSize));
     custom_qos.reliable();             // 必须匹配发布者的 RELIABLE
     custom_qos.durability_volatile();  // 匹配发布者的 VOLATILE
     pointcloud_sub_ = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
         node_config_.point_cloud_topic, custom_qos,
         [this](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
-          auto pcl_cloud = this->ConvertMsgToPCLPointCloud<UndistortedLivoxPoint>(msg);
+          auto pcl_cloud =
+              this->ConvertMsgToPCLPointCloud<UndistortedLivoxPoint>(msg);
           if (pcl_cloud) {
-            AccumulatePointCloudBack<UndistortedLivoxPoint>(pcl_cloud, annotation_status_.queue_undistorted,
-                                                            msg->header);
+            AccumulatePointCloudBack<UndistortedLivoxPoint>(
+                pcl_cloud, annotation_status_.queue_undistorted, msg->header);
           }
         },
         options);
   } else {
-    ERROR("Invalid point_cloud_type: {}. Must be 0 or 1.", node_config_.point_cloud_type);
+    ERROR("Invalid point_cloud_type: {}. Must be 0 or 1.",
+          node_config_.point_cloud_type);
     return;
   }
 }
@@ -445,23 +544,39 @@ void GenPromptPoint::CreateImageSubscription() {
   rclcpp::SubscriptionOptions options;
   options.callback_group = callback_group_camera_;
   // 订阅图像话题
-  if (node_config_.image_source_type & (1 << ConstValue::kImageSourceLeftCamera)) {
-    INFO("Subscribing to original left camera image topic: {}", node_config_.left_image_topic);
+  if (node_config_.image_source_type &
+      (1 << ConstValue::kImageSourceLeftCamera)) {
+    INFO("Subscribing to original left camera image topic: {}",
+         node_config_.left_image_topic);
     left_image_sub_ = node_->create_subscription<sensor_msgs::msg::Image>(
-        node_config_.left_image_topic, rclcpp::SensorDataQoS().keep_last(ConstValue::kCameraQueueSize),
-        [this](const sensor_msgs::msg::Image::SharedPtr msg) { HandleLeftImageMsg(msg); }, options);
+        node_config_.left_image_topic,
+        rclcpp::SensorDataQoS().keep_last(ConstValue::kCameraQueueSize),
+        [this](const sensor_msgs::msg::Image::SharedPtr msg) {
+          HandleLeftImageMsg(msg);
+        },
+        options);
   }
-  if (node_config_.image_source_type & (1 << ConstValue::kImageSourceRightCamera)) {
-    INFO("Subscribing to original right camera image topic: {}", node_config_.right_image_topic);
+  if (node_config_.image_source_type &
+      (1 << ConstValue::kImageSourceRightCamera)) {
+    INFO("Subscribing to original right camera image topic: {}",
+         node_config_.right_image_topic);
     right_image_sub_ = node_->create_subscription<sensor_msgs::msg::Image>(
-        node_config_.right_image_topic, rclcpp::SensorDataQoS().keep_last(ConstValue::kCameraQueueSize),
-        [this](const sensor_msgs::msg::Image::SharedPtr msg) { HandleRightImageMsg(msg); }, options);
+        node_config_.right_image_topic,
+        rclcpp::SensorDataQoS().keep_last(ConstValue::kCameraQueueSize),
+        [this](const sensor_msgs::msg::Image::SharedPtr msg) {
+          HandleRightImageMsg(msg);
+        },
+        options);
   }
 }
 
-void GenPromptPoint::HandleLeftImageMsg(const sensor_msgs::msg::Image::SharedPtr msg) {
+void GenPromptPoint::HandleLeftImageMsg(
+    const sensor_msgs::msg::Image::SharedPtr msg) {
   annotation_status_.left_image_rcv_count++;
-  if (annotation_status_.left_image_rcv_count % node_config_.image_save_interval != 0) return;
+  if (annotation_status_.left_image_rcv_count %
+          node_config_.image_save_interval !=
+      0)
+    return;
 
   try {
     auto start_time = std::chrono::high_resolution_clock::now();
@@ -478,7 +593,8 @@ void GenPromptPoint::HandleLeftImageMsg(const sensor_msgs::msg::Image::SharedPtr
     }
 
     // ================== 2. 获取并补偿点云 (时间对齐) ==================
-    pcl::PointCloud<pcl::PointXYZI>::Ptr cloud_in_lidar_raw(new pcl::PointCloud<pcl::PointXYZI>);
+    pcl::PointCloud<PointXYZIT>::Ptr cloud_in_lidar_raw(
+        new pcl::PointCloud<PointXYZIT>);
     int64_t img_time_ns = rclcpp::Time(msg->header.stamp).nanoseconds();
     if (!WaitForSyncedPointCloud(img_time_ns, cloud_in_lidar_raw)) return;
 
@@ -487,21 +603,28 @@ void GenPromptPoint::HandleLeftImageMsg(const sensor_msgs::msg::Image::SharedPtr
 
     // 计算从 Lidar(t_lidar) 到 Lidar(t_img) 的自车运动补偿矩阵
     Eigen::Matrix4f tf_lidar_compensation;
-    GetTimeInterpolatedTransform(ConstValue::kLidarLink, img_time, ConstValue::kLidarLink, lidar_time,
-                                 ConstValue::kInsMap, Eigen::Isometry3d::Identity(), tf_lidar_compensation);
+    GetTimeInterpolatedTransform(
+        ConstValue::kLidarLink, img_time, ConstValue::kLidarLink, lidar_time,
+        ConstValue::kInsMap, Eigen::Isometry3d::Identity(),
+        tf_lidar_compensation);
 
     // 生成【图像时刻对齐】的 Lidar 点云
-    pcl::PointCloud<pcl::PointXYZI>::Ptr aligned_lidar_cloud(new pcl::PointCloud<pcl::PointXYZI>);
-    pcl::transformPointCloud(*cloud_in_lidar_raw, *aligned_lidar_cloud, tf_lidar_compensation);
-    aligned_lidar_cloud->header.stamp = img_time.nanoseconds() / 1000;  // 覆写时间戳为图像时间
+    pcl::PointCloud<PointXYZIT>::Ptr aligned_lidar_cloud(
+        new pcl::PointCloud<PointXYZIT>);
+    pcl::transformPointCloud(*cloud_in_lidar_raw, *aligned_lidar_cloud,
+                             tf_lidar_compensation);
+    aligned_lidar_cloud->header.stamp =
+        img_time.nanoseconds() / 1000;  // 覆写时间戳为图像时间
 
     // ================== 3. 保存基础传感器数据 ==================
     if (node_config_.save_raw_image) {
-      SaveOriginImageToFile(msg, fig, annotation_status_.left_original_image_save_folder, "", timestamp);
+      SaveOriginImageToFile(msg, fig,
+                            annotation_status_.left_original_image_save_folder,
+                            "", timestamp);
     }
     if (node_config_.save_synced_pcd) {
-      std::string pcd_filename =
-          annotation_status_.accumulate_pc_save_folder + "/" + std::to_string(timestamp) + ".pcd";
+      std::string pcd_filename = annotation_status_.accumulate_pc_save_folder +
+                                 "/" + std::to_string(timestamp) + ".pcd";
       if (pcl::io::savePCDFileBinary(pcd_filename, *aligned_lidar_cloud) == 0) {
         INFO("Saved Aligned PCD: {}", timestamp);
       }
@@ -512,62 +635,84 @@ void GenPromptPoint::HandleLeftImageMsg(const sensor_msgs::msg::Image::SharedPtr
 
     Eigen::Matrix4f tf_map_to_cam, tf_map_to_lidar;
     if (!GetMapToCameraAndLidarTf(img_time, tf_map_to_cam, tf_map_to_lidar)) {
-      WARN("Skipping annotation for timestamp {} due to missing TF.", timestamp);
+      WARN("Skipping annotation for timestamp {} due to missing TF.",
+           timestamp);
       // 虽然没 TF，但可以保底输出一个空的 json 避免文件缺失
       if (node_config_.generate_xtreme1_json)
-        GenerateCameraExtrinsic(timestamp, fig.cols, fig.rows, Eigen::Matrix4f::Identity());
+        GenerateCameraExtrinsic(timestamp, fig.cols, fig.rows,
+                                Eigen::Matrix4f::Identity());
       return;
     }
 
-    // 将对齐后的雷达点云转到相机系 (因为点云已经是 t_img 时刻，直接用静态外参即可！)
-    Eigen::Matrix4f static_lidar_to_cam = annotation_status_.isometry_lcam2lidar.inverse().matrix().cast<float>();
-    pcl::PointCloud<pcl::PointXYZI>::Ptr cloud_in_cam(new pcl::PointCloud<pcl::PointXYZI>);
-    pcl::transformPointCloud(*aligned_lidar_cloud, *cloud_in_cam, static_lidar_to_cam);
+    // 将对齐后的雷达点云转到相机系 (因为点云已经是 t_img
+    // 时刻，直接用静态外参即可！)
+    Eigen::Matrix4f static_lidar_to_cam =
+        annotation_status_.isometry_lcam2lidar.inverse().matrix().cast<float>();
+    pcl::PointCloud<PointXYZIT>::Ptr cloud_in_cam(
+        new pcl::PointCloud<PointXYZIT>);
+    pcl::transformPointCloud(*aligned_lidar_cloud, *cloud_in_cam,
+                             static_lidar_to_cam);
 
     // --- 4.1 深度图与语义分割 ---
     cv::Mat current_scan_depth_f32;
-    if (node_config_.generate_depth_map || node_config_.generate_semantic_mask) {
+    if (node_config_.generate_depth_map ||
+        node_config_.generate_semantic_mask) {
       if (node_config_.generate_depth_map) {
         cv::Mat fused_img, raw_depth_u16;
-        GenerateDepthAndFusion(cloud_in_cam, fig, annotation_status_.left_intrinsic_data, fused_img, raw_depth_u16,
-                               current_scan_depth_f32);
-        SaveOriginImageToFile(msg, raw_depth_u16, annotation_status_.left_depth_image_save_folder, "depth", timestamp);
+        GenerateDepthAndFusion(
+            cloud_in_cam, fig, annotation_status_.left_intrinsic_data,
+            fused_img, raw_depth_u16, current_scan_depth_f32);
+        SaveOriginImageToFile(msg, raw_depth_u16,
+                              annotation_status_.left_depth_image_save_folder,
+                              "depth", timestamp);
         if (node_config_.enable_visual_verify) {
-          SaveOriginImageToFile(msg, fused_img, annotation_status_.left_fuse_image_save_folder, "dep_fuse", timestamp);
+          SaveOriginImageToFile(msg, fused_img,
+                                annotation_status_.left_fuse_image_save_folder,
+                                "dep_fuse", timestamp);
         }
       }
 
       if (node_config_.generate_semantic_mask) {
         cv::Mat semantic_mask;
-        GenerateSemanticMask(current_scan_depth_f32, annotation_status_.left_intrinsic_data, tf_map_to_cam,
-                             semantic_mask);
-        SaveOriginImageToFile(msg, semantic_mask, annotation_status_.left_semantic_image_save_folder, "sem_mask",
-                              timestamp);
+        GenerateSemanticMask(current_scan_depth_f32,
+                             annotation_status_.left_intrinsic_data,
+                             tf_map_to_cam, semantic_mask);
+        SaveOriginImageToFile(
+            msg, semantic_mask,
+            annotation_status_.left_semantic_image_save_folder, "sem_mask",
+            timestamp);
 
         if (node_config_.enable_visual_verify) {
           cv::Mat vis_img;
-          GenerateSemanticVisualization(fig, semantic_mask, tf_map_to_cam, annotation_status_.left_intrinsic_data,
+          GenerateSemanticVisualization(fig, semantic_mask, tf_map_to_cam,
+                                        annotation_status_.left_intrinsic_data,
                                         vis_img);
-          SaveOriginImageToFile(msg, vis_img, annotation_status_.left_fuse_image_save_folder, "sem_fuse", timestamp);
+          SaveOriginImageToFile(msg, vis_img,
+                                annotation_status_.left_fuse_image_save_folder,
+                                "sem_fuse", timestamp);
         }
       }
     }
 
     // --- 4.2 KITTI / NuScenes 3D Bounding Box ---
     if (node_config_.generate_kitti_label) {
-      GenerateKITTILabel(timestamp, fig, tf_map_to_cam, annotation_status_.left_intrinsic_data,
-                         annotation_status_.left_label_save_folder, cloud_in_cam);
+      GenerateKITTILabel(
+          timestamp, fig, tf_map_to_cam, annotation_status_.left_intrinsic_data,
+          annotation_status_.left_label_save_folder, cloud_in_cam);
 
       if (node_config_.enable_visual_verify) {
         cv::Mat verify_img;
         VerifyKITTILabel(timestamp, fig, annotation_status_.left_intrinsic_data,
                          annotation_status_.left_label_save_folder, verify_img);
-        SaveOriginImageToFile(msg, verify_img, annotation_status_.left_fuse_image_save_folder, "kitti_verify",
-                              timestamp);
+        SaveOriginImageToFile(msg, verify_img,
+                              annotation_status_.left_fuse_image_save_folder,
+                              "kitti_verify", timestamp);
         // 使用对齐后的点云进行验证
-        VerifyKITTILabelInPointCloud(timestamp, aligned_lidar_cloud, annotation_status_.isometry_lcam2lidar,
-                                     annotation_status_.left_label_save_folder,
-                                     annotation_status_.left_fuse_image_save_folder);
+        VerifyKITTILabelInPointCloud(
+            timestamp, aligned_lidar_cloud,
+            annotation_status_.isometry_lcam2lidar,
+            annotation_status_.left_label_save_folder,
+            annotation_status_.left_fuse_image_save_folder);
       }
     }
 
@@ -582,17 +727,23 @@ void GenPromptPoint::HandleLeftImageMsg(const sensor_msgs::msg::Image::SharedPtr
     }
 
     auto end_time = std::chrono::high_resolution_clock::now();
-    double ms = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count() / 1000.0;
+    double ms = std::chrono::duration_cast<std::chrono::microseconds>(
+                    end_time - start_time)
+                    .count() /
+                1000.0;
     INFO("Handle Left Image Pipeline Done. Time taken: {:.2f} ms", ms);
   } catch (cv_bridge::Exception& e) {
     ERROR("Catch cv_bridge Error: {}", e.what());
   }
 }
 
-void GenPromptPoint::HandleRightImageMsg(const sensor_msgs::msg::Image::SharedPtr msg) {
+void GenPromptPoint::HandleRightImageMsg(
+    const sensor_msgs::msg::Image::SharedPtr msg) {
   auto start_time = std::chrono::high_resolution_clock::now();
   annotation_status_.right_image_rcv_count++;
-  if (annotation_status_.right_image_rcv_count % node_config_.image_save_interval != 0) {
+  if (annotation_status_.right_image_rcv_count %
+          node_config_.image_save_interval !=
+      0) {
     return;
   }
   try {
@@ -603,7 +754,8 @@ void GenPromptPoint::HandleRightImageMsg(const sensor_msgs::msg::Image::SharedPt
     // 4. 生成文件名（建议使用时间戳或序号）
     // 使用毫秒级时间戳可以避免文件名重复
     int64_t timestamp = msg->header.stamp.sec * 1e9 + msg->header.stamp.nanosec;
-    std::string filename = node_config_.right_camera_save_folder + "/img_" + std::to_string(timestamp) + ".png";
+    std::string filename = node_config_.right_camera_save_folder + "/img_" +
+                           std::to_string(timestamp) + ".png";
 
     // 提取cv::Mat
     cv::Mat fig = cv_ptr->image;
@@ -620,7 +772,8 @@ void GenPromptPoint::HandleRightImageMsg(const sensor_msgs::msg::Image::SharedPt
     // 记录结束时间并计算差值
     auto end_time = std::chrono::high_resolution_clock::now();
     // 计算耗时（单位：毫秒）
-    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
+        end_time - start_time);
     double ms = duration.count() / 1000.0;
     INFO("Handle Right Image Done Time taken: {} ms", ms);
   } catch (cv_bridge::Exception& e) {
@@ -628,14 +781,17 @@ void GenPromptPoint::HandleRightImageMsg(const sensor_msgs::msg::Image::SharedPt
   }
 }
 
-cv::Mat GenPromptPoint::ConvertRosImageToCvMat(const sensor_msgs::msg::Image::SharedPtr& msg) {
+cv::Mat GenPromptPoint::ConvertRosImageToCvMat(
+    const sensor_msgs::msg::Image::SharedPtr& msg) {
   cv::Mat out_img;
   try {
-    if (msg->encoding == "jpeg" || msg->encoding == "jpg" || msg->encoding == "png") {
+    if (msg->encoding == "jpeg" || msg->encoding == "jpg" ||
+        msg->encoding == "png") {
       // 压缩格式：直接解码 byte 数组
       out_img = cv::imdecode(msg->data, cv::IMREAD_COLOR);
       if (out_img.empty()) {
-        ERROR("Failed to decode compressed image data (encoding: {}).", msg->encoding);
+        ERROR("Failed to decode compressed image data (encoding: {}).",
+              msg->encoding);
       }
     } else {
       // 原始格式：使用 cv_bridge 转换
@@ -651,20 +807,24 @@ cv::Mat GenPromptPoint::ConvertRosImageToCvMat(const sensor_msgs::msg::Image::Sh
   return out_img;
 }
 
-void GenPromptPoint::VerifyKITTILabel(int64_t timestamp, const cv::Mat& original_image,
-                                      const std::vector<double>& intrinsics, const std::string& label_folder,
+void GenPromptPoint::VerifyKITTILabel(int64_t timestamp,
+                                      const cv::Mat& original_image,
+                                      const std::vector<double>& intrinsics,
+                                      const std::string& label_folder,
                                       cv::Mat& out_vis_image) {
   // 1. 初始化输出图像为原图的拷贝
   original_image.copyTo(out_vis_image);
 
-  std::string label_file = label_folder + "/" + std::to_string(timestamp) + ".txt";
+  std::string label_file =
+      label_folder + "/" + std::to_string(timestamp) + ".txt";
   std::ifstream ifs(label_file);
   if (!ifs.is_open()) {
     WARN("Verification skipped: Cannot open label file {}", label_file);
     return;
   }
 
-  double fx = intrinsics[0], cx = intrinsics[2], fy = intrinsics[4], cy = intrinsics[5];
+  double fx = intrinsics[0], cx = intrinsics[2], fy = intrinsics[4],
+         cy = intrinsics[5];
   std::string line;
   int valid_box_count = 0;
 
@@ -676,7 +836,8 @@ void GenPromptPoint::VerifyKITTILabel(int64_t timestamp, const cv::Mat& original
     float rx = 0.0f, rz = 0.0f;
 
     // 解析 KITTI 基础参数
-    ss >> type >> trunc >> occ >> alpha >> left >> top >> right >> bottom >> h >> w >> l >> x >> y >> z >> ry;
+    ss >> type >> trunc >> occ >> alpha >> left >> top >> right >> bottom >>
+        h >> w >> l >> x >> y >> z >> ry;
     // 解析 17 参数格式中的 rx 和 rz
     if (ss >> rx) {
       ss >> rz;
@@ -691,15 +852,18 @@ void GenPromptPoint::VerifyKITTILabel(int64_t timestamp, const cv::Mat& original
     float h_full = h;
     // 局部坐标定义：底面中心为原点，Y轴负方向为高度方向
     std::vector<Eigen::Vector3f> corners_local = {
-        {half_l, -h_full, half_w},  {half_l, -h_full, -half_w},  {half_l, 0, -half_w},  {half_l, 0, half_w},
-        {-half_l, -h_full, half_w}, {-half_l, -h_full, -half_w}, {-half_l, 0, -half_w}, {-half_l, 0, half_w}};
+        {half_l, -h_full, half_w},  {half_l, -h_full, -half_w},
+        {half_l, 0, -half_w},       {half_l, 0, half_w},
+        {-half_l, -h_full, half_w}, {-half_l, -h_full, -half_w},
+        {-half_l, 0, -half_w},      {-half_l, 0, half_w}};
 
     // ==================== 2. 计算 6-DoF 旋转矩阵与位姿 ====================
     tf2::Quaternion q;
     q.setRPY(rx, ry, rz);
     tf2::Matrix3x3 mat(q);
     Eigen::Matrix3f R_6dof;
-    R_6dof << mat[0][0], mat[0][1], mat[0][2], mat[1][0], mat[1][1], mat[1][2], mat[2][0], mat[2][1], mat[2][2];
+    R_6dof << mat[0][0], mat[0][1], mat[0][2], mat[1][0], mat[1][1], mat[1][2],
+        mat[2][0], mat[2][1], mat[2][2];
     Eigen::Vector3f T(x, y, z);
 
     // 计算几何中心 (相机系)
@@ -709,31 +873,39 @@ void GenPromptPoint::VerifyKITTILabel(int64_t timestamp, const cv::Mat& original
     // ==================== 3. 打印详细日志 ====================
     INFO("Box [{}] Verification Details:", type);
     INFO("  -> BottomCenter (Cam): X:{:.3f}, Y:{:.3f}, Z:{:.3f}", x, y, z);
-    INFO("  -> GeoCenter    (Cam): X:{:.3f}, Y:{:.3f}, Z:{:.3f}", geo_center_cam.x(), geo_center_cam.y(),
-         geo_center_cam.z());
+    INFO("  -> GeoCenter    (Cam): X:{:.3f}, Y:{:.3f}, Z:{:.3f}",
+         geo_center_cam.x(), geo_center_cam.y(), geo_center_cam.z());
     INFO("  -> Corners Local (Rel to BottomCenter):");
     for (size_t i = 0; i < corners_local.size(); ++i) {
-      INFO("     [{}] X:{:7.3f}, Y:{:7.3f}, Z:{:7.3f}", i, corners_local[i].x(), corners_local[i].y(),
-           corners_local[i].z());
+      INFO("     [{}] X:{:7.3f}, Y:{:7.3f}, Z:{:7.3f}", i, corners_local[i].x(),
+           corners_local[i].y(), corners_local[i].z());
     }
     INFO("  -> Corners in Camera Frame (R_6dof * Local + T):");
     for (size_t i = 0; i < corners_local.size(); ++i) {
       Eigen::Vector3f pt_cam = R_6dof * corners_local[i] + T;
-      INFO("     [{}] X:{:7.3f}, Y:{:7.3f}, Z:{:7.3f}", i, pt_cam.x(), pt_cam.y(), pt_cam.z());
+      INFO("     [{}] X:{:7.3f}, Y:{:7.3f}, Z:{:7.3f}", i, pt_cam.x(),
+           pt_cam.y(), pt_cam.z());
     }
     INFO("  -> local2cam Matrix:");
-    INFO("     [{:7.3f}, {:7.3f}, {:7.3f}]", R_6dof(0, 0), R_6dof(0, 1), R_6dof(0, 2));
-    INFO("     [{:7.3f}, {:7.3f}, {:7.3f}]", R_6dof(1, 0), R_6dof(1, 1), R_6dof(1, 2));
-    INFO("     [{:7.3f}, {:7.3f}, {:7.3f}]", R_6dof(2, 0), R_6dof(2, 1), R_6dof(2, 2));
+    INFO("     [{:7.3f}, {:7.3f}, {:7.3f}]", R_6dof(0, 0), R_6dof(0, 1),
+         R_6dof(0, 2));
+    INFO("     [{:7.3f}, {:7.3f}, {:7.3f}]", R_6dof(1, 0), R_6dof(1, 1),
+         R_6dof(1, 2));
+    INFO("     [{:7.3f}, {:7.3f}, {:7.3f}]", R_6dof(2, 0), R_6dof(2, 1),
+         R_6dof(2, 2));
 
     // ==================== 4. 绘制 2D Box (绿色) ====================
     cv::Scalar color_2d(0, 255, 0);
-    cv::rectangle(out_vis_image, cv::Point(left, top), cv::Point(right, bottom), color_2d, 2);
-    cv::putText(out_vis_image, type, cv::Point(left, top - 5), cv::FONT_HERSHEY_SIMPLEX, 0.6, color_2d, 2);
+    cv::rectangle(out_vis_image, cv::Point(left, top), cv::Point(right, bottom),
+                  color_2d, 2);
+    cv::putText(out_vis_image, type, cv::Point(left, top - 5),
+                cv::FONT_HERSHEY_SIMPLEX, 0.6, color_2d, 2);
 
-    // ==================== 5. 绘制标准 KITTI 4-DoF 框 (橙色对照) ====================
+    // ==================== 5. 绘制标准 KITTI 4-DoF 框 (橙色对照)
+    // ====================
     Eigen::Matrix3f R_y;
-    R_y << std::cos(ry), 0, std::sin(ry), 0, 1, 0, -std::sin(ry), 0, std::cos(ry);
+    R_y << std::cos(ry), 0, std::sin(ry), 0, 1, 0, -std::sin(ry), 0,
+        std::cos(ry);
     std::vector<cv::Point> pts_2d_kitti;
     bool valid_3d_kitti = true;
     for (const auto& pt_local : corners_local) {
@@ -743,14 +915,18 @@ void GenPromptPoint::VerifyKITTILabel(int64_t timestamp, const cv::Mat& original
         break;
       }
       pts_2d_kitti.push_back(
-          cv::Point(std::round(fx * pt_cam.x() / pt_cam.z() + cx), std::round(fy * pt_cam.y() / pt_cam.z() + cy)));
+          cv::Point(std::round(fx * pt_cam.x() / pt_cam.z() + cx),
+                    std::round(fy * pt_cam.y() / pt_cam.z() + cy)));
     }
     if (valid_3d_kitti && pts_2d_kitti.size() == 8) {
       cv::Scalar color_3d_kitti(0, 165, 255);
       for (int i = 0; i < 4; ++i) {
-        cv::line(out_vis_image, pts_2d_kitti[i], pts_2d_kitti[(i + 1) % 4], color_3d_kitti, 2);
-        cv::line(out_vis_image, pts_2d_kitti[i + 4], pts_2d_kitti[((i + 1) % 4) + 4], color_3d_kitti, 2);
-        cv::line(out_vis_image, pts_2d_kitti[i], pts_2d_kitti[i + 4], color_3d_kitti, 2);
+        cv::line(out_vis_image, pts_2d_kitti[i], pts_2d_kitti[(i + 1) % 4],
+                 color_3d_kitti, 2);
+        cv::line(out_vis_image, pts_2d_kitti[i + 4],
+                 pts_2d_kitti[((i + 1) % 4) + 4], color_3d_kitti, 2);
+        cv::line(out_vis_image, pts_2d_kitti[i], pts_2d_kitti[i + 4],
+                 color_3d_kitti, 2);
       }
     }
 
@@ -764,34 +940,42 @@ void GenPromptPoint::VerifyKITTILabel(int64_t timestamp, const cv::Mat& original
         break;
       }
       pts_2d_comp.push_back(
-          cv::Point(std::round(fx * pt_cam.x() / pt_cam.z() + cx), std::round(fy * pt_cam.y() / pt_cam.z() + cy)));
+          cv::Point(std::round(fx * pt_cam.x() / pt_cam.z() + cx),
+                    std::round(fy * pt_cam.y() / pt_cam.z() + cy)));
     }
 
     if (valid_3d_comp && pts_2d_comp.size() == 8) {
       cv::Scalar color_3d_comp(255, 0, 255);
       for (int i = 0; i < 4; ++i) {
-        cv::line(out_vis_image, pts_2d_comp[i], pts_2d_comp[(i + 1) % 4], color_3d_comp, 2);
-        cv::line(out_vis_image, pts_2d_comp[i + 4], pts_2d_comp[((i + 1) % 4) + 4], color_3d_comp, 2);
-        cv::line(out_vis_image, pts_2d_comp[i], pts_2d_comp[i + 4], color_3d_comp, 2);
+        cv::line(out_vis_image, pts_2d_comp[i], pts_2d_comp[(i + 1) % 4],
+                 color_3d_comp, 2);
+        cv::line(out_vis_image, pts_2d_comp[i + 4],
+                 pts_2d_comp[((i + 1) % 4) + 4], color_3d_comp, 2);
+        cv::line(out_vis_image, pts_2d_comp[i], pts_2d_comp[i + 4],
+                 color_3d_comp, 2);
       }
 
       // === [新增特性] 逆向解析车头朝向并绘制箭头 ===
       // 1. 提取旋转矩阵第一列作为前向向量 (X轴)
       Eigen::Vector3f v_forward(R_6dof(0, 0), R_6dof(1, 0), R_6dof(2, 0));
       // 2. 计算前脸中心 (局部系下 X向为 l/2, Y向为高度中心 -h/2)
-      Eigen::Vector3f front_center_cam = T + R_6dof * Eigen::Vector3f(l / 2.0f, -h / 2.0f, 0.0f);
+      Eigen::Vector3f front_center_cam =
+          T + R_6dof * Eigen::Vector3f(l / 2.0f, -h / 2.0f, 0.0f);
       // 3. 沿 v_forward 延伸 2 米
       Eigen::Vector3f pointer_tip_cam = front_center_cam + 2.0f * v_forward;
 
       // 确保指示针的起点和终点都在相机前方
       if (front_center_cam.z() > 0.1 && pointer_tip_cam.z() > 0.1) {
-        cv::Point p1(std::round(fx * front_center_cam.x() / front_center_cam.z() + cx),
-                     std::round(fy * front_center_cam.y() / front_center_cam.z() + cy));
-        cv::Point p2(std::round(fx * pointer_tip_cam.x() / pointer_tip_cam.z() + cx),
-                     std::round(fy * pointer_tip_cam.y() / pointer_tip_cam.z() + cy));
+        cv::Point p1(
+            std::round(fx * front_center_cam.x() / front_center_cam.z() + cx),
+            std::round(fy * front_center_cam.y() / front_center_cam.z() + cy));
+        cv::Point p2(
+            std::round(fx * pointer_tip_cam.x() / pointer_tip_cam.z() + cx),
+            std::round(fy * pointer_tip_cam.y() / pointer_tip_cam.z() + cy));
 
         // 绘制亮绿色箭头，thickness=3, tipLength=0.2
-        cv::arrowedLine(out_vis_image, p1, p2, cv::Scalar(0, 255, 0), 3, 8, 0, 0.2);
+        cv::arrowedLine(out_vis_image, p1, p2, cv::Scalar(0, 255, 0), 3, 8, 0,
+                        0.2);
       }
     }
   }
@@ -800,15 +984,18 @@ void GenPromptPoint::VerifyKITTILabel(int64_t timestamp, const cv::Mat& original
   INFO("Verified KITTI Label (Valid Boxes: {})", valid_box_count);
 }
 
-void GenPromptPoint::SaveOriginImageToFile(const sensor_msgs::msg::Image::SharedPtr& msg,
-                                           const cv::Mat& fig,           // 改为常量引用，避免拷贝
-                                           const std::string& save_dir,  // 将路径传入，增加通用性
-                                           const std::string& file_name_before_stamp, int64_t timestamp) {
+void GenPromptPoint::SaveOriginImageToFile(
+    const sensor_msgs::msg::Image::SharedPtr& msg,
+    const cv::Mat& fig,           // 改为常量引用，避免拷贝
+    const std::string& save_dir,  // 将路径传入，增加通用性
+    const std::string& file_name_before_stamp, int64_t timestamp) {
   // 1. 确定后缀名
   std::string extension = ".png";
-  // 2. 只有当原图确实是 jpeg，且当前要保存的矩阵(fig)是普通 8 位 3 通道彩色图时，才允许使用 jpg
-  // 这样就能保护 16 位的深度图 (CV_16UC1) 和 1 通道的语义图 (CV_8UC1) 不被 jpg 破坏
-  if ((msg->encoding == "jpeg" || msg->encoding == "jpg") && fig.type() == CV_8UC3) {
+  // 2. 只有当原图确实是 jpeg，且当前要保存的矩阵(fig)是普通 8 位 3
+  // 通道彩色图时，才允许使用 jpg 这样就能保护 16 位的深度图 (CV_16UC1) 和 1
+  // 通道的语义图 (CV_8UC1) 不被 jpg 破坏
+  if ((msg->encoding == "jpeg" || msg->encoding == "jpg") &&
+      fig.type() == CV_8UC3) {
     extension = ".jpg";
   }
 
@@ -818,13 +1005,15 @@ void GenPromptPoint::SaveOriginImageToFile(const sensor_msgs::msg::Image::Shared
   if (file_name_before_stamp.empty()) {
     ori_filename = save_dir + "/" + std::to_string(timestamp) + extension;
   } else {
-    ori_filename = save_dir + "/" + file_name_before_stamp + "_" + std::to_string(timestamp) + extension;
+    ori_filename = save_dir + "/" + file_name_before_stamp + "_" +
+                   std::to_string(timestamp) + extension;
   }
 
   // 3. 执行写入
   try {
     if (cv::imwrite(ori_filename, fig)) {
-      INFO("Saved Image ({}): {}", (extension == ".jpg" ? "JPEG" : "PNG"), ori_filename);
+      INFO("Saved Image ({}): {}", (extension == ".jpg" ? "JPEG" : "PNG"),
+           ori_filename);
     } else {
       ERROR("Failed to write image to: {}", ori_filename);
     }
@@ -837,17 +1026,25 @@ void GenPromptPoint::CreateCameraIntrinsicsSubscription() {
   rclcpp::QoS qos_profile(1);
   qos_profile.reliability(rclcpp::ReliabilityPolicy::Reliable);
   qos_profile.durability(rclcpp::DurabilityPolicy::TransientLocal);
-  if (node_config_.image_source_type & (1 << ConstValue::kImageSourceLeftCamera)) {
-    INFO("Subscribing to original left camera intrinsic topic: {}", node_config_.left_camera_intrinsic_topic);
-    left_camera_intrinsics_sub_ = node_->create_subscription<std_msgs::msg::Float64MultiArray>(
-        node_config_.left_camera_intrinsic_topic, qos_profile,
-        std::bind(&GenPromptPoint::LeftIntrinsicsCallback, this, std::placeholders::_1));
+  if (node_config_.image_source_type &
+      (1 << ConstValue::kImageSourceLeftCamera)) {
+    INFO("Subscribing to original left camera intrinsic topic: {}",
+         node_config_.left_camera_intrinsic_topic);
+    left_camera_intrinsics_sub_ =
+        node_->create_subscription<std_msgs::msg::Float64MultiArray>(
+            node_config_.left_camera_intrinsic_topic, qos_profile,
+            std::bind(&GenPromptPoint::LeftIntrinsicsCallback, this,
+                      std::placeholders::_1));
   }
-  if (node_config_.image_source_type & (1 << ConstValue::kImageSourceRightCamera)) {
-    INFO("Subscribing to original right camera intrinsic topic: {}", node_config_.right_camera_intrinsic_topic);
-    right_camera_intrinsics_sub_ = node_->create_subscription<std_msgs::msg::Float64MultiArray>(
-        node_config_.right_camera_intrinsic_topic, qos_profile,
-        std::bind(&GenPromptPoint::RightIntrinsicsCallback, this, std::placeholders::_1));
+  if (node_config_.image_source_type &
+      (1 << ConstValue::kImageSourceRightCamera)) {
+    INFO("Subscribing to original right camera intrinsic topic: {}",
+         node_config_.right_camera_intrinsic_topic);
+    right_camera_intrinsics_sub_ =
+        node_->create_subscription<std_msgs::msg::Float64MultiArray>(
+            node_config_.right_camera_intrinsic_topic, qos_profile,
+            std::bind(&GenPromptPoint::RightIntrinsicsCallback, this,
+                      std::placeholders::_1));
   }
 }
 
@@ -861,13 +1058,15 @@ void GenPromptPoint::InitTfListener() {
   // 注意：Listener 必须保持存活，不能是局部变量，否则出了作用域就会停止接收数据
   tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
-  tf_check_timer_ = node_->create_wall_timer(std::chrono::milliseconds(ConstValue::kCheckTfPeriodMs),
-                                             std::bind(&GenPromptPoint::CheckTfCallback, this));
+  tf_check_timer_ = node_->create_wall_timer(
+      std::chrono::milliseconds(ConstValue::kCheckTfPeriodMs),
+      std::bind(&GenPromptPoint::CheckTfCallback, this));
 }
 
-bool GenPromptPoint::LookUpTransform(const std::string& target_frame,  // 父坐标系
-                                     const std::string& source_frame,  // 子坐标系
-                                     geometry_msgs::msg::TransformStamped& out_transform) {
+bool GenPromptPoint::LookUpTransform(
+    const std::string& target_frame,  // 父坐标系
+    const std::string& source_frame,  // 子坐标系
+    geometry_msgs::msg::TransformStamped& out_transform) {
   // 1. 安全检查
   if (!tf_buffer_) {
     ERROR("TF Buffer is not initialized!");
@@ -877,81 +1076,102 @@ bool GenPromptPoint::LookUpTransform(const std::string& target_frame,  // 父坐
     // 2. 查询变换
     // 使用 timeout (例如 50ms) 比 TimePointZero 更稳健，能容忍微小的网络延迟
     // 如果你坚持要非阻塞，保持 tf2::TimePointZero 即可
-    out_transform =
-        tf_buffer_->lookupTransform(target_frame, source_frame, tf2::TimePointZero, std::chrono::milliseconds(20));
+    out_transform = tf_buffer_->lookupTransform(target_frame, source_frame,
+                                                tf2::TimePointZero,
+                                                std::chrono::milliseconds(20));
     return true;  // 成功
   } catch (const tf2::TransformException& ex) {
     // 3. 异常处理
     // 使用 WARN 而不是 ERROR，因为在系统启动初期这是常见情况
-    WARN("Cannot get coordinate transform {} -> {}: {}", source_frame, target_frame, ex.what());
+    WARN("Cannot get coordinate transform {} -> {}: {}", source_frame,
+         target_frame, ex.what());
     return false;  // 失败
   }
 }
 
 void GenPromptPoint::CheckTfCallback() {
-  std::lock_guard<std::mutex> lock(locks_.mutex_use_tf);  // 确保同一时间只有一个线程在访问 TF 相关的状态
+  std::lock_guard<std::mutex> lock(
+      locks_.mutex_use_tf);  // 确保同一时间只有一个线程在访问 TF 相关的状态
 
   // 计数器累加
   tf_check_count_++;
-  INFO("Check Tf Use: {}s", tf_check_count_ * ConstValue::kCheckTfPeriodMs / ConstValue::kSeconds2Milliseconds);
+  INFO("Check Tf Use: {}s", tf_check_count_ * ConstValue::kCheckTfPeriodMs /
+                                ConstValue::kSeconds2Milliseconds);
 
   geometry_msgs::msg::TransformStamped transform_result_test;
 
   // 1. 测试 左相机 -> 雷达 (静态外参)
   if (!annotation_status_.has_tf_left_camera_link_2_lidar_link) {
-    if (LookUpTransform(ConstValue::kLidarLink, ConstValue::kCameraLeftLink, transform_result_test)) {
-      INFO("Real Transform found: {} -> {}. Switching to live TF!", ConstValue::kCameraLeftLink,
-           ConstValue::kLidarLink);
-      annotation_status_.isometry_lcam2lidar = tf2::transformToEigen(transform_result_test);
-      print_transform_eigen_isometry("LeftCamera -> Lidar", annotation_status_.isometry_lcam2lidar);
-      annotation_status_.has_tf_left_camera_link_2_lidar_link = true;  // 真正拿到了才置位
+    if (LookUpTransform(ConstValue::kLidarLink, ConstValue::kCameraLeftLink,
+                        transform_result_test)) {
+      INFO("Real Transform found: {} -> {}. Switching to live TF!",
+           ConstValue::kCameraLeftLink, ConstValue::kLidarLink);
+      annotation_status_.isometry_lcam2lidar =
+          tf2::transformToEigen(transform_result_test);
+      print_transform_eigen_isometry("LeftCamera -> Lidar",
+                                     annotation_status_.isometry_lcam2lidar);
+      annotation_status_.has_tf_left_camera_link_2_lidar_link =
+          true;  // 真正拿到了才置位
     } else {
-      // 查不到就不管，因为 isometry_lcam2lidar 里已经是默认值了。使用 THROTTLEWARN 防刷屏。
-      THROTTLEWARN(5, "Waiting for live TF {} -> {}. Using default meanwhile.", ConstValue::kCameraLeftLink,
-                   ConstValue::kLidarLink);
+      // 查不到就不管，因为 isometry_lcam2lidar 里已经是默认值了。使用
+      // THROTTLEWARN 防刷屏。
+      THROTTLEWARN(5, "Waiting for live TF {} -> {}. Using default meanwhile.",
+                   ConstValue::kCameraLeftLink, ConstValue::kLidarLink);
     }
   }
 
   // 2. 测试 右相机 -> 雷达 (静态外参)
   if (!annotation_status_.has_tf_right_camera_link_2_lidar_link) {
-    if (LookUpTransform(ConstValue::kLidarLink, ConstValue::kCameraRightLink, transform_result_test)) {
-      INFO("Real Transform found: {} -> {}. Switching to live TF!", ConstValue::kCameraRightLink,
-           ConstValue::kLidarLink);
-      annotation_status_.isometry_rcam2lidar = tf2::transformToEigen(transform_result_test);
-      print_transform_eigen_isometry("RightCamera -> Lidar", annotation_status_.isometry_rcam2lidar);
+    if (LookUpTransform(ConstValue::kLidarLink, ConstValue::kCameraRightLink,
+                        transform_result_test)) {
+      INFO("Real Transform found: {} -> {}. Switching to live TF!",
+           ConstValue::kCameraRightLink, ConstValue::kLidarLink);
+      annotation_status_.isometry_rcam2lidar =
+          tf2::transformToEigen(transform_result_test);
+      print_transform_eigen_isometry("RightCamera -> Lidar",
+                                     annotation_status_.isometry_rcam2lidar);
       annotation_status_.has_tf_right_camera_link_2_lidar_link = true;
     } else {
-      THROTTLEWARN(5, "Waiting for live TF {} -> {}. Using default meanwhile.", ConstValue::kCameraRightLink,
-                   ConstValue::kLidarLink);
+      THROTTLEWARN(5, "Waiting for live TF {} -> {}. Using default meanwhile.",
+                   ConstValue::kCameraRightLink, ConstValue::kLidarLink);
     }
   }
 
   // 3. 测试 雷达 -> 车体 (静态外参)
   if (!annotation_status_.has_tf_lidar_link_2_ins_link) {
-    if (LookUpTransform(ConstValue::kInsLink, ConstValue::kLidarLink, transform_result_test)) {
-      INFO("Real Transform found: {} -> {}. Switching to live TF!", ConstValue::kLidarLink, ConstValue::kInsLink);
-      annotation_status_.isometry_lidar2ins = tf2::transformToEigen(transform_result_test);
-      print_transform_eigen_isometry("Lidar -> InsLink", annotation_status_.isometry_lidar2ins);
+    if (LookUpTransform(ConstValue::kInsLink, ConstValue::kLidarLink,
+                        transform_result_test)) {
+      INFO("Real Transform found: {} -> {}. Switching to live TF!",
+           ConstValue::kLidarLink, ConstValue::kInsLink);
+      annotation_status_.isometry_lidar2ins =
+          tf2::transformToEigen(transform_result_test);
+      print_transform_eigen_isometry("Lidar -> InsLink",
+                                     annotation_status_.isometry_lidar2ins);
       annotation_status_.has_tf_lidar_link_2_ins_link = true;
     } else {
-      THROTTLEWARN(5, "Waiting for live TF {} -> {}. Using default meanwhile.", ConstValue::kLidarLink,
-                   ConstValue::kInsLink);
+      THROTTLEWARN(5, "Waiting for live TF {} -> {}. Using default meanwhile.",
+                   ConstValue::kLidarLink, ConstValue::kInsLink);
     }
   }
 
   // 4. 校验全部前置静态条件是否满足
   bool is_all_ready = true;
-  if (!annotation_status_.has_tf_left_camera_link_2_lidar_link) is_all_ready = false;
-  if (!annotation_status_.has_tf_right_camera_link_2_lidar_link) is_all_ready = false;
+  if (!annotation_status_.has_tf_left_camera_link_2_lidar_link)
+    is_all_ready = false;
+  if (!annotation_status_.has_tf_right_camera_link_2_lidar_link)
+    is_all_ready = false;
   if (!annotation_status_.has_tf_lidar_link_2_ins_link) is_all_ready = false;
 
   if (is_all_ready) {
-    INFO("All required static TF relationships are ready. Timer will be cancelled.");
+    INFO(
+        "All required static TF relationships are ready. Timer will be "
+        "cancelled.");
     tf_check_timer_->cancel();
   }
 }
 
-void GenPromptPoint::LeftIntrinsicsCallback(const std_msgs::msg::Float64MultiArray::SharedPtr msg) {
+void GenPromptPoint::LeftIntrinsicsCallback(
+    const std_msgs::msg::Float64MultiArray::SharedPtr msg) {
   // 1. 检查数据是否为空
   if (msg->data.empty()) {
     WARN("Received empty left camera intrinsics!");
@@ -971,7 +1191,8 @@ void GenPromptPoint::LeftIntrinsicsCallback(const std_msgs::msg::Float64MultiArr
       cols = 3;
       WARN("Layout info missing, assuming 3x3 based on data size.");
     } else {
-      ERROR("Layout empty and data size is {}. Cannot determine rows/cols!", msg->data.size());
+      ERROR("Layout empty and data size is {}. Cannot determine rows/cols!",
+            msg->data.size());
       return;
     }
   }
@@ -984,7 +1205,8 @@ void GenPromptPoint::LeftIntrinsicsCallback(const std_msgs::msg::Float64MultiArr
   print_matrix_as_numpy(msg->data, rows, cols);
 }
 
-void GenPromptPoint::RightIntrinsicsCallback(const std_msgs::msg::Float64MultiArray::SharedPtr msg) {
+void GenPromptPoint::RightIntrinsicsCallback(
+    const std_msgs::msg::Float64MultiArray::SharedPtr msg) {
   // 1. 检查数据是否为空
   if (msg->data.empty()) {
     WARN("Received empty right camera intrinsics!");
@@ -1002,9 +1224,14 @@ void GenPromptPoint::RightIntrinsicsCallback(const std_msgs::msg::Float64MultiAr
     if (msg->data.size() == ConstValue::kDefaultSizeofIntrinsic) {
       rows = 3;
       cols = 3;
-      WARN("Layout info missing, assuming 3x3 based on data size (Right Camera).");
+      WARN(
+          "Layout info missing, assuming 3x3 based on data size (Right "
+          "Camera).");
     } else {
-      ERROR("Layout empty and data size is {}. Cannot determine rows/cols for Right Camera!", msg->data.size());
+      ERROR(
+          "Layout empty and data size is {}. Cannot determine rows/cols for "
+          "Right Camera!",
+          msg->data.size());
       return;
     }
   }
@@ -1020,7 +1247,8 @@ void GenPromptPoint::RightIntrinsicsCallback(const std_msgs::msg::Float64MultiAr
 }
 
 void GenPromptPoint::ExtractCloudsFromBoxes() {
-  if (!annotation_status_.global_map || annotation_status_.global_map->empty()) {
+  if (!annotation_status_.global_map ||
+      annotation_status_.global_map->empty()) {
     WARN("Global map is empty, cannot extract clouds.");
     return;
   }
@@ -1030,7 +1258,8 @@ void GenPromptPoint::ExtractCloudsFromBoxes() {
     return;
   }
 
-  INFO("Starting to extract point clouds for {} labels...", annotation_status_.current_labels.size());
+  INFO("Starting to extract point clouds for {} labels...",
+       annotation_status_.current_labels.size());
 
   // 清空之前的缓存
   annotation_status_.object_clouds.clear();
@@ -1042,15 +1271,19 @@ void GenPromptPoint::ExtractCloudsFromBoxes() {
   for (size_t i = 0; i < annotation_status_.current_labels.size(); ++i) {
     auto& box = annotation_status_.current_labels[i];
     INFO(
-        "Debug Box [{}]: tx={:.2f}, ty={:.2f}, tz={:.2f} | rx={:.2f}, ry={:.2f}, rz={:.2f} | l={:.2f}, w={:.2f}, "
+        "Debug Box [{}]: tx={:.2f}, ty={:.2f}, tz={:.2f} | rx={:.2f}, "
+        "ry={:.2f}, rz={:.2f} | l={:.2f}, w={:.2f}, "
         "h={:.2f}",
-        box.object_type, box.tx, box.ty, box.tz, box.rx, box.ry, box.rz, box.l, box.w, box.h);
+        box.object_type, box.tx, box.ty, box.tz, box.rx, box.ry, box.rz, box.l,
+        box.w, box.h);
 
     // 3. 创建结果点云容器
-    pcl::PointCloud<pcl::PointXYZ>::Ptr object_cloud(new pcl::PointCloud<pcl::PointXYZ>);
+    pcl::PointCloud<pcl::PointXYZ>::Ptr object_cloud(
+        new pcl::PointCloud<pcl::PointXYZ>);
 
     // 4. 设置 CropBox 参数
-    // CropBox 的原理是：定义一个未旋转的盒子(MinMax)，然后设置平移和旋转让它去匹配地图上的位置
+    // CropBox
+    // 的原理是：定义一个未旋转的盒子(MinMax)，然后设置平移和旋转让它去匹配地图上的位置
 
     // 设置盒子的尺寸范围 (相对于盒子中心)
     // 注意：XML中的 l=x方向长度, w=y方向宽度, h=z方向高度
@@ -1073,10 +1306,12 @@ void GenPromptPoint::ExtractCloudsFromBoxes() {
     annotation_status_.object_clouds.push_back(object_cloud);
 
     // 打印日志：看看每个框里抠出了多少个点
-    INFO("Label [{}] ({}) -> Extracted {} points.", i, box.object_type, object_cloud->size());
+    INFO("Label [{}] ({}) -> Extracted {} points.", i, box.object_type,
+         object_cloud->size());
   }
 
-  INFO("Extraction finished. Total object clouds: {}", annotation_status_.object_clouds.size());
+  INFO("Extraction finished. Total object clouds: {}",
+       annotation_status_.object_clouds.size());
 }
 
 void GenPromptPoint::LoadLabelsFromXML(const std::string& xml_path) {
@@ -1115,7 +1350,8 @@ void GenPromptPoint::LoadLabelsFromXML(const std::string& xml_path) {
     BoundingBox box;
 
     // --- 解析基础信息 ---
-    tinyxml2::XMLElement* type_elem = item_node->FirstChildElement("objectType");
+    tinyxml2::XMLElement* type_elem =
+        item_node->FirstChildElement("objectType");
     if (!type_elem || !type_elem->GetText()) {
       WARN("Skip item: missing objectType.");
       item_node = item_node->NextSiblingElement("item");
@@ -1174,7 +1410,8 @@ void GenPromptPoint::LoadLabelsFromXML(const std::string& xml_path) {
         // 解析状态
         pose_item->FirstChildElement("state")->QueryIntText(&box.state);
         pose_item->FirstChildElement("occlusion")->QueryIntText(&box.occlusion);
-        pose_item->FirstChildElement("truncation")->QueryIntText(&box.truncation);
+        pose_item->FirstChildElement("truncation")
+            ->QueryIntText(&box.truncation);
       }
     }
 
@@ -1192,27 +1429,37 @@ void GenPromptPoint::LoadLabelsFromXML(const std::string& xml_path) {
   if (!annotation_status_.current_labels.empty()) {
     const auto& first = annotation_status_.current_labels[0];
     INFO(
-        "Debug First Label: Type={}, Pos=({:.2f}, {:.2f}, {:.2f}), Size=({:.2f}, {:.2f}, {:.2f}), Rotation=({:.2f}, "
+        "Debug First Label: Type={}, Pos=({:.2f}, {:.2f}, {:.2f}), "
+        "Size=({:.2f}, {:.2f}, {:.2f}), Rotation=({:.2f}, "
         "{:.2f}, {:.2f})",
-        first.object_type, first.tx, first.ty, first.tz, first.l, first.w, first.h, first.rx, first.ry, first.rz);
+        first.object_type, first.tx, first.ty, first.tz, first.l, first.w,
+        first.h, first.rx, first.ry, first.rz);
   }
 }
 
-void GenPromptPoint::GenerateSemanticMask(const cv::Mat& current_scan_depth, const std::vector<double>& intrinsics,
-                                          const Eigen::Matrix4f& tf_map_to_cam, cv::Mat& out_semantic_mask) {
-  if (annotation_status_.object_clouds.size() != annotation_status_.current_labels.size()) {
-    WARN("Semantic mask generation skipped: object_clouds are not extracted. Did you load the global map?");
+void GenPromptPoint::GenerateSemanticMask(const cv::Mat& current_scan_depth,
+                                          const std::vector<double>& intrinsics,
+                                          const Eigen::Matrix4f& tf_map_to_cam,
+                                          cv::Mat& out_semantic_mask) {
+  if (annotation_status_.object_clouds.size() !=
+      annotation_status_.current_labels.size()) {
+    WARN(
+        "Semantic mask generation skipped: object_clouds are not extracted. "
+        "Did you load the global map?");
     // 初始化一个全白的图直接返回，防止后续逻辑报错
-    out_semantic_mask = cv::Mat(current_scan_depth.size(), CV_8UC1, cv::Scalar(255));
+    out_semantic_mask =
+        cv::Mat(current_scan_depth.size(), CV_8UC1, cv::Scalar(255));
     return;
   }
   auto start_time = std::chrono::high_resolution_clock::now();
   // ==================== 1. 初始化 ====================
   // 初始化输出语义图 (背景设为 255)
-  out_semantic_mask = cv::Mat(current_scan_depth.size(), CV_8UC1, cv::Scalar(255));
+  out_semantic_mask =
+      cv::Mat(current_scan_depth.size(), CV_8UC1, cv::Scalar(255));
 
   // 初始化 Label 的 Z-Buffer (用于处理 Box 之间的遮挡)
-  cv::Mat label_z_buffer(current_scan_depth.size(), CV_32FC1, cv::Scalar(std::numeric_limits<float>::infinity()));
+  cv::Mat label_z_buffer(current_scan_depth.size(), CV_32FC1,
+                         cv::Scalar(std::numeric_limits<float>::infinity()));
 
   // 解析内参
   double fx = intrinsics[0];
@@ -1221,7 +1468,8 @@ void GenPromptPoint::GenerateSemanticMask(const cv::Mat& current_scan_depth, con
   double cy = intrinsics[5];
 
   INFO("Start GenerateSemanticMask. Total Labels: {}, Depth Map Size: [{}x{}]",
-       annotation_status_.current_labels.size(), current_scan_depth.cols, current_scan_depth.rows);
+       annotation_status_.current_labels.size(), current_scan_depth.cols,
+       current_scan_depth.rows);
   // ==================== [需求1] 解决LiDAR稀疏透视问题 ====================
   // 策略：对深度图进行腐蚀（Min-Filter），让前景物体（小深度值）向周围的空洞（Inf）扩张。
   // 这样，如果有物体挡在前面，它的“遮挡判定区”会比实际雷达点大一圈，防止背景漏过来。
@@ -1231,8 +1479,8 @@ void GenPromptPoint::GenerateSemanticMask(const cv::Mat& current_scan_depth, con
 
   // Kernel Size: 5x5 通常适合 Livox 这种花瓣扫描，能填补大部分间隙
   int occlusion_kernel_size = 5;
-  cv::Mat occlusion_kernel =
-      cv::getStructuringElement(cv::MORPH_RECT, cv::Size(occlusion_kernel_size, occlusion_kernel_size));
+  cv::Mat occlusion_kernel = cv::getStructuringElement(
+      cv::MORPH_RECT, cv::Size(occlusion_kernel_size, occlusion_kernel_size));
   // 注意：深度越小越近，erode 是取最小值，所以是让“近处物体”变大
   cv::erode(safe_occlusion_depth, safe_occlusion_depth, occlusion_kernel);
 
@@ -1252,7 +1500,8 @@ void GenPromptPoint::GenerateSemanticMask(const cv::Mat& current_scan_depth, con
     Eigen::Vector4f center_in_map(box.tx, box.ty, box.tz, 1.0);
     Eigen::Vector4f center_in_cam = tf_map_to_cam * center_in_map;
     if (center_in_cam.z() < 0.1) {
-      INFO("Label [{}] skipped: Behind camera (z={:.2f})", i, center_in_cam.z());
+      INFO("Label [{}] skipped: Behind camera (z={:.2f})", i,
+           center_in_cam.z());
       continue;
     }
 
@@ -1265,7 +1514,8 @@ void GenPromptPoint::GenerateSemanticMask(const cv::Mat& current_scan_depth, con
     }
     total_boxes_processed++;
 
-    // ==================== 3D 空间内缩 (Inner Core Filtering) ====================
+    // ==================== 3D 空间内缩 (Inner Core Filtering)
+    // ====================
     const Eigen::Affine3d& map_to_box = box.map_to_local_tf;
 
     // 设定缩放比例 (0.8 表示只取中间 80% 的点)
@@ -1275,7 +1525,8 @@ void GenPromptPoint::GenerateSemanticMask(const cv::Mat& current_scan_depth, con
     double half_h_threshold = (box.h * shrink_ratio) / 2.0;
 
     // --- 坐标转换：Map -> Camera ---
-    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_in_cam(new pcl::PointCloud<pcl::PointXYZ>);
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_in_cam(
+        new pcl::PointCloud<pcl::PointXYZ>);
     pcl::transformPointCloud(*cloud_in_map, *cloud_in_cam, tf_map_to_cam);
 
     int pts_total = cloud_in_cam->size();
@@ -1286,8 +1537,10 @@ void GenPromptPoint::GenerateSemanticMask(const cv::Mat& current_scan_depth, con
     // 遍历点云
     // 注意：我们需要原始 cloud_in_map 的点来做 3D 内缩判断
     for (size_t pt_idx = 0; pt_idx < cloud_in_cam->points.size(); ++pt_idx) {
-      const auto& pt_cam = cloud_in_cam->points[pt_idx];  // 相机系下的点 (用于投影)
-      const auto& pt_map = cloud_in_map->points[pt_idx];  // 地图系下的点 (用于3D收缩判断)
+      const auto& pt_cam =
+          cloud_in_cam->points[pt_idx];  // 相机系下的点 (用于投影)
+      const auto& pt_map =
+          cloud_in_map->points[pt_idx];  // 地图系下的点 (用于3D收缩判断)
 
       if (pt_cam.z < 0.5) {
         continue;
@@ -1295,10 +1548,12 @@ void GenPromptPoint::GenerateSemanticMask(const cv::Mat& current_scan_depth, con
 
       // [核心代码] 3D 内缩检查
       Eigen::Vector3d pt_vec_map(pt_map.x, pt_map.y, pt_map.z);
-      Eigen::Vector3d pt_local = map_to_box * pt_vec_map;  // 转到 Box 局部坐标系
+      Eigen::Vector3d pt_local =
+          map_to_box * pt_vec_map;  // 转到 Box 局部坐标系
 
       // 只要有一个维度超出了收缩后的范围，就丢弃该点
-      if (std::abs(pt_local.x()) > half_l_threshold || std::abs(pt_local.y()) > half_w_threshold ||
+      if (std::abs(pt_local.x()) > half_l_threshold ||
+          std::abs(pt_local.y()) > half_w_threshold ||
           std::abs(pt_local.z()) > half_h_threshold) {
         continue;
       }
@@ -1309,7 +1564,8 @@ void GenPromptPoint::GenerateSemanticMask(const cv::Mat& current_scan_depth, con
       int v = std::round((fy * pt_cam.y) / pt_cam.z + cy);
 
       // --- 边界与遮挡检查 ---
-      if (u >= 0 && u < out_semantic_mask.cols && v >= 0 && v < out_semantic_mask.rows) {
+      if (u >= 0 && u < out_semantic_mask.cols && v >= 0 &&
+          v < out_semantic_mask.rows) {
         // 使用 [需求1] 生成的 safe_occlusion_depth 进行判断
         float occlusion_z = safe_occlusion_depth.at<float>(v, u);
 
@@ -1318,7 +1574,8 @@ void GenPromptPoint::GenerateSemanticMask(const cv::Mat& current_scan_depth, con
 
         // 如果该像素（或其邻域）有障碍物，且比当前 Box 点更近，则认为被遮挡
         bool is_occluded = false;
-        if (!std::isinf(occlusion_z) && pt_cam.z > (occlusion_z + occlusion_tolerance)) {
+        if (!std::isinf(occlusion_z) &&
+            pt_cam.z > (occlusion_z + occlusion_tolerance)) {
           is_occluded = true;
         }
 
@@ -1342,10 +1599,15 @@ void GenPromptPoint::GenerateSemanticMask(const cv::Mat& current_scan_depth, con
       // [日志] 关键：如果一个框在视锥内，但是 0 个点被画出来，这通常意味着问题
       // 可能是收缩太狠了，或者是完全被遮挡了
       if (pts_total > 0 && pts_passed_shrink == 0) {
-        INFO("Label [{}] ({}) invisible: All {} points removed by 3D Shrink (Ratio 0.8).", i, box.object_type,
-             pts_total);
+        INFO(
+            "Label [{}] ({}) invisible: All {} points removed by 3D Shrink "
+            "(Ratio 0.8).",
+            i, box.object_type, pts_total);
       } else if (pts_passed_shrink > 0 && pts_passed_occlusion == 0) {
-        INFO("Label [{}] ({}) invisible: All points occluded by dynamic objects.", i, box.object_type);
+        INFO(
+            "Label [{}] ({}) invisible: All points occluded by dynamic "
+            "objects.",
+            i, box.object_type);
       }
     }
   }
@@ -1359,25 +1621,32 @@ void GenPromptPoint::GenerateSemanticMask(const cv::Mat& current_scan_depth, con
   // 效果等于物体的 Mask 变小了。
 
   int mask_shrink_size = 3;  // 3x3 核，温和地去掉边缘的一圈像素
-  cv::Mat shrink_kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(mask_shrink_size, mask_shrink_size));
+  cv::Mat shrink_kernel = cv::getStructuringElement(
+      cv::MORPH_RECT, cv::Size(mask_shrink_size, mask_shrink_size));
 
   // 注意：只针对非背景区域进行操作，防止把本来就很小的远处物体完全抹掉（可选保护逻辑）
   // 这里直接全局操作，假设 SAM2 对极小物体本身就很难处理
   cv::dilate(out_semantic_mask, out_semantic_mask, shrink_kernel);
 
   auto end_time = std::chrono::high_resolution_clock::now();
-  double cost_ms = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count() / 1000.0;
+  double cost_ms = std::chrono::duration_cast<std::chrono::microseconds>(
+                       end_time - start_time)
+                       .count() /
+                   1000.0;
 
   // 这是最关键的一行日志，告诉你当前帧生成了什么
   INFO(
-      "Semantic Mask Generated in {:.2f}ms. Labels: Total={}, Visible/Drawn={}, Pixels={}. (ErosionK={}, "
+      "Semantic Mask Generated in {:.2f}ms. Labels: Total={}, "
+      "Visible/Drawn={}, Pixels={}. (ErosionK={}, "
       "ShrinkRatio={})",
-      cost_ms, annotation_status_.current_labels.size(), total_boxes_drawn, total_pixels_drawn, occlusion_kernel_size,
+      cost_ms, annotation_status_.current_labels.size(), total_boxes_drawn,
+      total_pixels_drawn, occlusion_kernel_size,
       0.8);  // 直接打印参数值方便回溯
 }
 
-bool GenPromptPoint::WaitForSyncedPointCloud(const int64_t target_time_ns,
-                                             pcl::PointCloud<pcl::PointXYZI>::Ptr& out_cloud) {
+bool GenPromptPoint::WaitForSyncedPointCloud(
+    const int64_t target_time_ns,
+    pcl::PointCloud<PointXYZIT>::Ptr& out_cloud) {
   // 建议：缩短睡眠时间，增加重试次数。
   // 这样能更频繁地检查，第一时间截获点云，总等待时间不变。
   int max_retry_count = 100;
@@ -1391,14 +1660,9 @@ bool GenPromptPoint::WaitForSyncedPointCloud(const int64_t target_time_ns,
       bool has_cloud = false;
       int64_t latest_cloud_ts_ns = 0;
 
-      // 1. 获取当前缓存中最新点云的时间戳
-      if (annotation_status_.pc_type == AutoAnnotationStatus::PointCloudType::Original &&
-          annotation_status_.latest_accumulated_cloud_original) {
-        latest_cloud_ts_ns = annotation_status_.latest_cloud_timestamp.nanoseconds();
-        has_cloud = true;
-      } else if (annotation_status_.pc_type == AutoAnnotationStatus::PointCloudType::Undistorted &&
-                 annotation_status_.latest_accumulated_cloud_undistorted) {
-        latest_cloud_ts_ns = annotation_status_.latest_cloud_timestamp.nanoseconds();
+      if (annotation_status_.latest_accumulated_cloud) {
+        latest_cloud_ts_ns =
+            annotation_status_.latest_cloud_timestamp.nanoseconds();
         has_cloud = true;
       }
 
@@ -1407,22 +1671,16 @@ bool GenPromptPoint::WaitForSyncedPointCloud(const int64_t target_time_ns,
 
         // 核心退出逻辑 A：如果点云时间已经追上或越过图像时间
         if (latest_cloud_ts_ns >= target_time_ns) {
-          if (annotation_status_.pc_type == AutoAnnotationStatus::PointCloudType::Original) {
-            pcl::copyPointCloud(*annotation_status_.latest_accumulated_cloud_original, *out_cloud);
-          } else {
-            pcl::copyPointCloud(*annotation_status_.latest_accumulated_cloud_undistorted, *out_cloud);
-          }
+          pcl::copyPointCloud(*annotation_status_.latest_accumulated_cloud,
+                              *out_cloud);
           INFO("Sync Success (Crossed). Diff: {:.3f}s", time_diff);
           return true;
         }
 
         // 核心退出逻辑 B：点云时间还没追上图像，但误差已经达标
         if (time_diff <= max_allowed_diff) {
-          if (annotation_status_.pc_type == AutoAnnotationStatus::PointCloudType::Original) {
-            pcl::copyPointCloud(*annotation_status_.latest_accumulated_cloud_original, *out_cloud);
-          } else {
-            pcl::copyPointCloud(*annotation_status_.latest_accumulated_cloud_undistorted, *out_cloud);
-          }
+          pcl::copyPointCloud(*annotation_status_.latest_accumulated_cloud,
+                              *out_cloud);
           INFO("Sync Success (Caught early). Diff: {:.3f}s", time_diff);
           return true;
         }
@@ -1437,9 +1695,10 @@ bool GenPromptPoint::WaitForSyncedPointCloud(const int64_t target_time_ns,
   return false;
 }
 
-void GenPromptPoint::GenerateSemanticVisualization(const cv::Mat& original_image, const cv::Mat& semantic_mask,
-                                                   const Eigen::Matrix4f& tf_map_to_cam,
-                                                   const std::vector<double>& intrinsics, cv::Mat& out_vis_image) {
+void GenPromptPoint::GenerateSemanticVisualization(
+    const cv::Mat& original_image, const cv::Mat& semantic_mask,
+    const Eigen::Matrix4f& tf_map_to_cam, const std::vector<double>& intrinsics,
+    cv::Mat& out_vis_image) {
   // 1. 初始化可视化图像为原图的一份拷贝
   original_image.copyTo(out_vis_image);
 
@@ -1460,7 +1719,8 @@ void GenPromptPoint::GenerateSemanticVisualization(const cv::Mat& original_image
       uint8_t class_id = semantic_mask.at<uint8_t>(y, x);
       if (class_id != 255 && color_map.find(class_id) != color_map.end()) {
         colored_mask.at<cv::Vec3b>(y, x) =
-            cv::Vec3b(color_map[class_id][0], color_map[class_id][1], color_map[class_id][2]);
+            cv::Vec3b(color_map[class_id][0], color_map[class_id][1],
+                      color_map[class_id][2]);
         mask_valid.at<uint8_t>(y, x) = 255;  // 标记哪些像素被涂色了
       }
     }
@@ -1488,16 +1748,21 @@ void GenPromptPoint::GenerateSemanticVisualization(const cv::Mat& original_image
     double hh = box.h / 2.0;
 
     std::vector<Eigen::Vector3d> corners_local = {
-        {hl, hw, hh},  {hl, -hw, hh},  {-hl, -hw, hh},  {-hl, hw, hh},  // 顶部 4 个点 (0,1,2,3)
-        {hl, hw, -hh}, {hl, -hw, -hh}, {-hl, -hw, -hh}, {-hl, hw, -hh}  // 底部 4 个点 (4,5,6,7)
+        {hl, hw, hh},    {hl, -hw, hh},
+        {-hl, -hw, hh},  {-hl, hw, hh},  // 顶部 4 个点 (0,1,2,3)
+        {hl, hw, -hh},   {hl, -hw, -hh},
+        {-hl, -hw, -hh}, {-hl, hw, -hh}  // 底部 4 个点 (4,5,6,7)
     };
 
-    Eigen::Affine3d local_to_map = box.map_to_local_tf.inverse();  // 从局部转回全局 Map
+    Eigen::Affine3d local_to_map =
+        box.map_to_local_tf.inverse();  // 从局部转回全局 Map
     std::vector<cv::Point> pts_2d;
     bool valid_box = true;
 
-    Eigen::Vector4f center_cam = tf_map_to_cam * Eigen::Vector4f(box.tx, box.ty, box.tz, 1.0f);
-    INFO("Box [{}] Distance to Camera Z: {:.2f} meters", box.object_type, center_cam.z());
+    Eigen::Vector4f center_cam =
+        tf_map_to_cam * Eigen::Vector4f(box.tx, box.ty, box.tz, 1.0f);
+    INFO("Box [{}] Distance to Camera Z: {:.2f} meters", box.object_type,
+         center_cam.z());
 
     // 投影 8 个顶点
     for (const auto& pt_local : corners_local) {
@@ -1523,19 +1788,22 @@ void GenPromptPoint::GenerateSemanticVisualization(const cv::Mat& original_image
     int thickness = 2;
     for (int i = 0; i < 4; ++i) {
       // 顶面
-      cv::line(out_vis_image, pts_2d[i], pts_2d[(i + 1) % 4], box_color, thickness);
+      cv::line(out_vis_image, pts_2d[i], pts_2d[(i + 1) % 4], box_color,
+               thickness);
       // 底面
-      cv::line(out_vis_image, pts_2d[i + 4], pts_2d[((i + 1) % 4) + 4], box_color, thickness);
+      cv::line(out_vis_image, pts_2d[i + 4], pts_2d[((i + 1) % 4) + 4],
+               box_color, thickness);
       // 侧面的柱子
       cv::line(out_vis_image, pts_2d[i], pts_2d[i + 4], box_color, thickness);
     }
   }
 }
 
-void GenPromptPoint::GenerateDepthAndFusion(const pcl::PointCloud<pcl::PointXYZI>::Ptr& cloud_in_cam,
-                                            const cv::Mat& original_image, const std::vector<double>& intrinsic_data,
-                                            cv::Mat& out_fused_image, cv::Mat& out_raw_depth_u16,
-                                            cv::Mat& out_raw_depth_f32) {
+void GenPromptPoint::GenerateDepthAndFusion(
+    const pcl::PointCloud<PointXYZIT>::Ptr& cloud_in_cam,
+    const cv::Mat& original_image, const std::vector<double>& intrinsic_data,
+    cv::Mat& out_fused_image, cv::Mat& out_raw_depth_u16,
+    cv::Mat& out_raw_depth_f32) {
   // 1. 初始化深度图 (单通道 float32，初始值为无穷大)
   cv::Mat depth_map(original_image.rows, original_image.cols, CV_32FC1,
                     cv::Scalar(std::numeric_limits<float>::infinity()));
@@ -1569,7 +1837,8 @@ void GenPromptPoint::GenerateDepthAndFusion(const pcl::PointCloud<pcl::PointXYZI
     cv::Mat clipped_depth;
     depth_map.copyTo(clipped_depth);
     double max_visual_dist = 10.0;
-    cv::threshold(clipped_depth, clipped_depth, max_visual_dist, max_visual_dist, cv::THRESH_TRUNC);
+    cv::threshold(clipped_depth, clipped_depth, max_visual_dist,
+                  max_visual_dist, cv::THRESH_TRUNC);
     cv::Mat norm_depth;
     cv::normalize(clipped_depth, norm_depth, 0, 255, cv::NORM_MINMAX, CV_8UC1);
     cv::applyColorMap(norm_depth, visual_depth, cv::COLORMAP_JET);
@@ -1605,11 +1874,11 @@ void GenPromptPoint::GenerateDepthAndFusion(const pcl::PointCloud<pcl::PointXYZI
   depth_map.convertTo(out_raw_depth_u16, CV_16UC1, 1000.0);
 }
 
-bool GenPromptPoint::GetTimeInterpolatedTransform(const std::string& target_frame, const rclcpp::Time& target_time,
-                                                  const std::string& source_frame, const rclcpp::Time& source_time,
-                                                  const std::string& fixed_frame,
-                                                  const Eigen::Isometry3d& fallback_extrinsic,
-                                                  Eigen::Matrix4f& out_tf_mat) {
+bool GenPromptPoint::GetTimeInterpolatedTransform(
+    const std::string& target_frame, const rclcpp::Time& target_time,
+    const std::string& source_frame, const rclcpp::Time& source_time,
+    const std::string& fixed_frame, const Eigen::Isometry3d& fallback_extrinsic,
+    Eigen::Matrix4f& out_tf_mat) {
   out_tf_mat = Eigen::Matrix4f::Identity();
   if (!tf_buffer_) {
     WARN("TF Buffer not initialized. Using fallback extrinsic.");
@@ -1620,30 +1889,37 @@ bool GenPromptPoint::GetTimeInterpolatedTransform(const std::string& target_fram
   try {
     // 请求高级 TF 变换 (Time-travel Transform)
     // 它的含义是：将 source_time 时刻的 source_frame 坐标系，
-    // 以 fixed_frame 为静止参考，转换到 target_time 时刻的 target_frame 坐标系。
-    geometry_msgs::msg::TransformStamped transform_stamped = tf_buffer_->lookupTransform(
-        target_frame, target_time, source_frame, source_time, fixed_frame, rclcpp::Duration::from_seconds(0.05));
+    // 以 fixed_frame 为静止参考，转换到 target_time 时刻的 target_frame
+    // 坐标系。
+    geometry_msgs::msg::TransformStamped transform_stamped =
+        tf_buffer_->lookupTransform(target_frame, target_time, source_frame,
+                                    source_time, fixed_frame,
+                                    rclcpp::Duration::from_seconds(0.05));
 
     Eigen::Affine3d affine = tf2::transformToEigen(transform_stamped);
     out_tf_mat = affine.matrix().cast<float>();
 
-    // double diff_ms = (target_time.nanoseconds() - source_time.nanoseconds()) / 1e6;
-    // INFO("Motion compensation applied. {} -> {} Time diff: {:.2f} ms", source_frame, target_frame, diff_ms);
+    // double diff_ms = (target_time.nanoseconds() - source_time.nanoseconds())
+    // / 1e6; INFO("Motion compensation applied. {} -> {} Time diff: {:.2f} ms",
+    // source_frame, target_frame, diff_ms);
     return true;
   } catch (const tf2::TransformException& ex) {
     // 如果查不到插值（比如刚好缺少里程计 TF），回退到静态外参保底
-    WARN("Time interpolation TF failed: {}. Fallback to static extrinsic.", ex.what());
+    WARN("Time interpolation TF failed: {}. Fallback to static extrinsic.",
+         ex.what());
     out_tf_mat = fallback_extrinsic.matrix().cast<float>();
     return false;
   }
 }
 
-void GenPromptPoint::GenerateKITTILabel(int64_t timestamp, const cv::Mat& fig, const Eigen::Matrix4f& tf_map_to_cam,
-                                        const std::vector<double>& intrinsics, const std::string& save_folder,
-                                        const pcl::PointCloud<pcl::PointXYZI>::Ptr& cloud_in_cam) {
+void GenPromptPoint::GenerateKITTILabel(
+    int64_t timestamp, const cv::Mat& fig, const Eigen::Matrix4f& tf_map_to_cam,
+    const std::vector<double>& intrinsics, const std::string& save_folder,
+    const pcl::PointCloud<PointXYZIT>::Ptr& cloud_in_cam) {
   if (annotation_status_.current_labels.empty()) return;
 
-  std::string label_filename = save_folder + "/" + std::to_string(timestamp) + ".txt";
+  std::string label_filename =
+      save_folder + "/" + std::to_string(timestamp) + ".txt";
   std::ofstream label_ofs(label_filename);
 
   if (!label_ofs.is_open()) {
@@ -1651,7 +1927,8 @@ void GenPromptPoint::GenerateKITTILabel(int64_t timestamp, const cv::Mat& fig, c
     return;
   }
 
-  double fx = intrinsics[0], cx = intrinsics[2], fy = intrinsics[4], cy = intrinsics[5];
+  double fx = intrinsics[0], cx = intrinsics[2], fy = intrinsics[4],
+         cy = intrinsics[5];
   int img_w = fig.cols, img_h = fig.rows;
   int saved_count = 0;
 
@@ -1663,27 +1940,37 @@ void GenPromptPoint::GenerateKITTILabel(int64_t timestamp, const cv::Mat& fig, c
     double hl = box.l / 2.0, hw = box.w / 2.0, hh = box.h / 2.0;
 
     Eigen::Vector3d bottom_local_check(0.0, 0.0, -box.h / 2.0);
-    Eigen::Vector4f bottom_cam_check = tf_map_to_cam * (local_to_map * bottom_local_check).cast<float>().homogeneous();
+    Eigen::Vector4f bottom_cam_check =
+        tf_map_to_cam *
+        (local_to_map * bottom_local_check).cast<float>().homogeneous();
     float dist_to_cam = bottom_cam_check.head<3>().norm();
 
     if (dist_to_cam > 30.0f) {
-      INFO("--> Dropped! [{}] was discarded: bottom center distance to camera ({:.2f}m) > 20m.", box.object_type,
-           dist_to_cam);
+      INFO(
+          "--> Dropped! [{}] was discarded: bottom center distance to camera "
+          "({:.2f}m) > 20m.",
+          box.object_type, dist_to_cam);
       continue;
     }
 
-    // ================= 1. 点云可见性检测 (高性能 AABB 过滤 + 精确检测) =================
+    // ================= 1. 点云可见性检测 (高性能 AABB 过滤 + 精确检测)
+    // =================
     int visible_point_count = 0;
-    Eigen::Matrix4f cam_to_local = box.map_to_local_tf.cast<float>() * tf_cam_to_map;
+    Eigen::Matrix4f cam_to_local =
+        box.map_to_local_tf.cast<float>() * tf_cam_to_map;
     float margin = 0.0f;
 
-    // --- 【性能优化核心】：计算 3D 框在 Camera 坐标系下的 AABB (粗略外包围盒) ---
-    float min_x = 1e9, max_x = -1e9, min_y = 1e9, max_y = -1e9, min_z = 1e9, max_z = -1e9;
-    std::vector<Eigen::Vector3d> corners_local = {{hl, hw, hh},  {hl, -hw, hh},  {-hl, -hw, hh},  {-hl, hw, hh},
-                                                  {hl, hw, -hh}, {hl, -hw, -hh}, {-hl, -hw, -hh}, {-hl, hw, -hh}};
+    // --- 【性能优化核心】：计算 3D 框在 Camera 坐标系下的 AABB (粗略外包围盒)
+    // ---
+    float min_x = 1e9, max_x = -1e9, min_y = 1e9, max_y = -1e9, min_z = 1e9,
+          max_z = -1e9;
+    std::vector<Eigen::Vector3d> corners_local = {
+        {hl, hw, hh},  {hl, -hw, hh},  {-hl, -hw, hh},  {-hl, hw, hh},
+        {hl, hw, -hh}, {hl, -hw, -hh}, {-hl, -hw, -hh}, {-hl, hw, -hh}};
 
     for (const auto& pt_local : corners_local) {
-      Eigen::Vector4f pt_cam = tf_map_to_cam * (local_to_map * pt_local).cast<float>().homogeneous();
+      Eigen::Vector4f pt_cam =
+          tf_map_to_cam * (local_to_map * pt_local).cast<float>().homogeneous();
       min_x = std::min(min_x, pt_cam.x());
       max_x = std::max(max_x, pt_cam.x());
       min_y = std::min(min_y, pt_cam.y());
@@ -1707,7 +1994,8 @@ void GenPromptPoint::GenerateKITTILabel(int64_t timestamp, const cv::Mat& fig, c
     for (const auto& pt : cloud_in_cam->points) {
       // 1.1 快速剔除：如果点根本不在粗略包围盒内，直接跳过 (瞬间过滤 99% 的点)
       // 注意这里没有判断 pt.z < 0.1，以便能捕获相机背后的雷达点
-      if (pt.x < min_x || pt.x > max_x || pt.y < min_y || pt.y > max_y || pt.z < min_z || pt.z > max_z) {
+      if (pt.x < min_x || pt.x > max_x || pt.y < min_y || pt.y > max_y ||
+          pt.z < min_z || pt.z > max_z) {
         continue;
       }
 
@@ -1715,20 +2003,26 @@ void GenPromptPoint::GenerateKITTILabel(int64_t timestamp, const cv::Mat& fig, c
       Eigen::Vector3f pt_cam(pt.x, pt.y, pt.z);
       Eigen::Vector3f pt_local = R * pt_cam + t;
 
-      if (std::abs(pt_local.x()) <= hl + margin && std::abs(pt_local.y()) <= hw + margin &&
+      if (std::abs(pt_local.x()) <= hl + margin &&
+          std::abs(pt_local.y()) <= hw + margin &&
           std::abs(pt_local.z()) <= hh + margin) {
         visible_point_count++;
       }
     }
 
-    INFO("Check KITTI Label - Object: [{}], Center(X:{:.2f}, Y:{:.2f}, Z:{:.2f}), Visible LiDAR Points: {}",
-         box.object_type, box.tx, box.ty, box.tz, visible_point_count);
+    INFO(
+        "Check KITTI Label - Object: [{}], Center(X:{:.2f}, Y:{:.2f}, "
+        "Z:{:.2f}), Visible LiDAR Points: {}",
+        box.object_type, box.tx, box.ty, box.tz, visible_point_count);
 
-    // [重要判定]：如果该 3D 框内击中的雷达点少于 50 个，认为不可见/被遮挡(幽灵框)，直接丢弃！
-    // 你也可以根据 ConstValue::kThresholdPcCheck 调整这里的 50
+    // [重要判定]：如果该 3D 框内击中的雷达点少于 50
+    // 个，认为不可见/被遮挡(幽灵框)，直接丢弃！ 你也可以根据
+    // ConstValue::kThresholdPcCheck 调整这里的 50
     if (visible_point_count < ConstValue::kThresholdPcCheck) {
-      WARN("--> Dropped! [{}] was discarded because visible_point_count ({}) < {}.", box.object_type,
-           visible_point_count, ConstValue::kThresholdPcCheck);
+      WARN(
+          "--> Dropped! [{}] was discarded because visible_point_count ({}) < "
+          "{}.",
+          box.object_type, visible_point_count, ConstValue::kThresholdPcCheck);
       continue;
     }
 
@@ -1736,8 +2030,12 @@ void GenPromptPoint::GenerateKITTILabel(int64_t timestamp, const cv::Mat& fig, c
     Eigen::Vector3d center_local(0, 0, 0);
     Eigen::Vector3d bottom_local(0, 0, -box.h / 2.0);
 
-    Eigen::Vector4f center_cam = tf_map_to_cam * (local_to_map * center_local).cast<float>().homogeneous();
-    Eigen::Vector4f bottom_cam = tf_map_to_cam * (local_to_map * bottom_local).cast<float>().homogeneous();
+    Eigen::Vector4f center_cam =
+        tf_map_to_cam *
+        (local_to_map * center_local).cast<float>().homogeneous();
+    Eigen::Vector4f bottom_cam =
+        tf_map_to_cam *
+        (local_to_map * bottom_local).cast<float>().homogeneous();
 
     float bbox_left = img_w, bbox_top = img_h, bbox_right = 0, bbox_bottom = 0;
     bool is_camera_visible = true;
@@ -1749,7 +2047,9 @@ void GenPromptPoint::GenerateKITTILabel(int64_t timestamp, const cv::Mat& fig, c
       // 2.2 判断是否有顶点在相机前方并计算 2D 投影边界
       bool any_point_in_front = false;
       for (const auto& pt_local : corners_local) {
-        Eigen::Vector4f pt_cam = tf_map_to_cam * (local_to_map * pt_local).cast<float>().homogeneous();
+        Eigen::Vector4f pt_cam =
+            tf_map_to_cam *
+            (local_to_map * pt_local).cast<float>().homogeneous();
         if (pt_cam.z() > 0.1) {
           any_point_in_front = true;
           float u = (fx * pt_cam.x()) / pt_cam.z() + cx;
@@ -1765,10 +2065,14 @@ void GenPromptPoint::GenerateKITTILabel(int64_t timestamp, const cv::Mat& fig, c
         is_camera_visible = false;
       } else {
         // 2.3 限制在图像边界内
-        bbox_left = std::max(0.0f, std::min(static_cast<float>(img_w) - 1, bbox_left));
-        bbox_top = std::max(0.0f, std::min(static_cast<float>(img_h) - 1, bbox_top));
-        bbox_right = std::max(0.0f, std::min(static_cast<float>(img_w) - 1, bbox_right));
-        bbox_bottom = std::max(0.0f, std::min(static_cast<float>(img_h) - 1, bbox_bottom));
+        bbox_left =
+            std::max(0.0f, std::min(static_cast<float>(img_w) - 1, bbox_left));
+        bbox_top =
+            std::max(0.0f, std::min(static_cast<float>(img_h) - 1, bbox_top));
+        bbox_right =
+            std::max(0.0f, std::min(static_cast<float>(img_w) - 1, bbox_right));
+        bbox_bottom = std::max(
+            0.0f, std::min(static_cast<float>(img_h) - 1, bbox_bottom));
 
         // 2.4 如果边界框无效（比如在图像外面被截断裁没了），也视为不可见
         if (bbox_right <= bbox_left || bbox_bottom <= bbox_top) {
@@ -1778,9 +2082,10 @@ void GenPromptPoint::GenerateKITTILabel(int64_t timestamp, const cv::Mat& fig, c
     }
 
     // ================= 3. 参数计算与写入 =================
-    Eigen::Matrix3f R_local_to_cam = tf_map_to_cam.block<3, 3>(0, 0) * local_to_map.linear().cast<float>();
-    // Eigen::Vector3f forward_cam = R_local_to_cam * Eigen::Vector3f(1.0f, 0.0f, 0.0f);
-    // float ry = std::atan2(-forward_cam.z(), forward_cam.x());
+    Eigen::Matrix3f R_local_to_cam =
+        tf_map_to_cam.block<3, 3>(0, 0) * local_to_map.linear().cast<float>();
+    // Eigen::Vector3f forward_cam = R_local_to_cam * Eigen::Vector3f(1.0f,
+    // 0.0f, 0.0f); float ry = std::atan2(-forward_cam.z(), forward_cam.x());
     // 使得旋转矩阵真正匹配下游 Dataloader 使用的 KITTI 局部顶点定义
     Eigen::Matrix3f R_kitti2ros;
     R_kitti2ros << 1, 0, 0, 0, 0, 1, 0, -1, 0;
@@ -1789,9 +2094,10 @@ void GenPromptPoint::GenerateKITTILabel(int64_t timestamp, const cv::Mat& fig, c
     Eigen::Matrix3f R_kitti_to_cam = R_local_to_cam * R_kitti2ros;
 
     // 利用 tf2 工具类提取完整的欧拉角 (rx: 绕X轴, ry: 绕Y轴, rz: 绕Z轴)
-    tf2::Matrix3x3 mat(R_kitti_to_cam(0, 0), R_kitti_to_cam(0, 1), R_kitti_to_cam(0, 2), R_kitti_to_cam(1, 0),
-                       R_kitti_to_cam(1, 1), R_kitti_to_cam(1, 2), R_kitti_to_cam(2, 0), R_kitti_to_cam(2, 1),
-                       R_kitti_to_cam(2, 2));
+    tf2::Matrix3x3 mat(
+        R_kitti_to_cam(0, 0), R_kitti_to_cam(0, 1), R_kitti_to_cam(0, 2),
+        R_kitti_to_cam(1, 0), R_kitti_to_cam(1, 1), R_kitti_to_cam(1, 2),
+        R_kitti_to_cam(2, 0), R_kitti_to_cam(2, 1), R_kitti_to_cam(2, 2));
     double rx_double, ry_double, rz_double;
     mat.getRPY(rx_double, ry_double, rz_double);
     float rx = static_cast<float>(rx_double);
@@ -1799,7 +2105,8 @@ void GenPromptPoint::GenerateKITTILabel(int64_t timestamp, const cv::Mat& fig, c
     float rz = static_cast<float>(rz_double);
 
     // 正常计算 alpha (观测角)
-    // Eigen::Vector3f forward_cam = R_kitti_to_cam * Eigen::Vector3f(1.0f, 0.0f, 0.0f);
+    // Eigen::Vector3f forward_cam = R_kitti_to_cam * Eigen::Vector3f(1.0f,
+    // 0.0f, 0.0f);
     float alpha = ry - std::atan2(bottom_cam.x(), bottom_cam.z());
     while (alpha > M_PI) alpha -= 2 * M_PI;
     while (alpha < -M_PI) alpha += 2 * M_PI;
@@ -1816,8 +2123,8 @@ void GenPromptPoint::GenerateKITTILabel(int64_t timestamp, const cv::Mat& fig, c
     if (is_camera_visible) {
       // 相机可见，正常输出
       std::ostringstream bbox_oss;
-      bbox_oss << std::fixed << std::setprecision(2) << bbox_left << " " << bbox_top << " " << bbox_right << " "
-               << bbox_bottom;
+      bbox_oss << std::fixed << std::setprecision(2) << bbox_left << " "
+               << bbox_top << " " << bbox_right << " " << bbox_bottom;
       bbox_str = bbox_oss.str();
 
       std::ostringstream alpha_oss;
@@ -1831,30 +2138,37 @@ void GenPromptPoint::GenerateKITTILabel(int64_t timestamp, const cv::Mat& fig, c
       alpha_str = "-10.00";  // KITTI约定俗成的无效角度值
     }
 
-    label_ofs << std::fixed << std::setprecision(4) << class_name << " " << truncation << " " << occlusion << " "
-              << alpha_str << " " << bbox_str << " " << std::setprecision(4) << box.h << " " << box.w << " " << box.l
-              << " " << bottom_cam.x() << " " << bottom_cam.y() << " " << bottom_cam.z() << " " << ry << " " << rx
-              << " " << rz << "\n";
+    label_ofs << std::fixed << std::setprecision(4) << class_name << " "
+              << truncation << " " << occlusion << " " << alpha_str << " "
+              << bbox_str << " " << std::setprecision(4) << box.h << " "
+              << box.w << " " << box.l << " " << bottom_cam.x() << " "
+              << bottom_cam.y() << " " << bottom_cam.z() << " " << ry << " "
+              << rx << " " << rz << "\n";
 
     saved_count++;
   }
   label_ofs.close();
-  INFO("Saved KITTI Label: {} (Total {} valid objects)", timestamp, saved_count);
+  INFO("Saved KITTI Label: {} (Total {} valid objects)", timestamp,
+       saved_count);
 }
 
-void GenPromptPoint::VerifyKITTILabelInPointCloud(int64_t timestamp,
-                                                  const pcl::PointCloud<pcl::PointXYZI>::Ptr& cloud_in_lidar_frame,
-                                                  const Eigen::Isometry3d& lcam2lidar, const std::string& label_folder,
-                                                  const std::string& save_folder) {
-  std::string label_file = label_folder + "/" + std::to_string(timestamp) + ".txt";
+void GenPromptPoint::VerifyKITTILabelInPointCloud(
+    int64_t timestamp,
+    const pcl::PointCloud<PointXYZIT>::Ptr& cloud_in_lidar_frame,
+    const Eigen::Isometry3d& lcam2lidar, const std::string& label_folder,
+    const std::string& save_folder) {
+  std::string label_file =
+      label_folder + "/" + std::to_string(timestamp) + ".txt";
   std::ifstream ifs(label_file);
   if (!ifs.is_open()) {
-    WARN("PointCloud Verification skipped: Cannot open label file {}", label_file);
+    WARN("PointCloud Verification skipped: Cannot open label file {}",
+         label_file);
     return;
   }
 
   // 1. 初始化背景点云（灰色）
-  pcl::PointCloud<pcl::PointXYZRGB>::Ptr vis_cloud(new pcl::PointCloud<pcl::PointXYZRGB>());
+  pcl::PointCloud<pcl::PointXYZRGB>::Ptr vis_cloud(
+      new pcl::PointCloud<pcl::PointXYZRGB>());
   // 优化：提前分配内存，防止大点云 push_back 导致内存重分配崩溃
   vis_cloud->points.reserve(cloud_in_lidar_frame->points.size() + 10000);
 
@@ -1871,7 +2185,8 @@ void GenPromptPoint::VerifyKITTILabelInPointCloud(int64_t timestamp,
 
   // ==================== 绘制工具函数 ====================
   // 绘制单条线段的 Lambda 函数 (用于画指示针)
-  auto draw_line = [&](const Eigen::Vector3f& p1, const Eigen::Vector3f& p2, uint8_t r, uint8_t g, uint8_t b) {
+  auto draw_line = [&](const Eigen::Vector3f& p1, const Eigen::Vector3f& p2,
+                       uint8_t r, uint8_t g, uint8_t b) {
     float dist = (p1 - p2).norm();
     int num_points = std::max(10, static_cast<int>(dist / 0.01f));
     for (int i = 0; i <= num_points; ++i) {
@@ -1889,9 +2204,11 @@ void GenPromptPoint::VerifyKITTILabelInPointCloud(int64_t timestamp,
   };
 
   // 绘制框线的 Lambda 函数 (复用画单线的逻辑，保持整洁)
-  auto draw_box_edges = [&](const std::vector<Eigen::Vector3f>& corners_lidar, uint8_t r, uint8_t g, uint8_t b) {
-    std::vector<std::pair<int, int>> edges = {{0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6},
-                                              {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
+  auto draw_box_edges = [&](const std::vector<Eigen::Vector3f>& corners_lidar,
+                            uint8_t r, uint8_t g, uint8_t b) {
+    std::vector<std::pair<int, int>> edges = {{0, 1}, {1, 2}, {2, 3}, {3, 0},
+                                              {4, 5}, {5, 6}, {6, 7}, {7, 4},
+                                              {0, 4}, {1, 5}, {2, 6}, {3, 7}};
     for (const auto& edge : edges) {
       draw_line(corners_lidar[edge.first], corners_lidar[edge.second], r, g, b);
     }
@@ -1908,7 +2225,8 @@ void GenPromptPoint::VerifyKITTILabelInPointCloud(int64_t timestamp,
     float rx = 0.0f, rz = 0.0f;
 
     // 解析 17 参数格式
-    ss >> type >> trunc >> occ >> alpha >> left >> top >> right >> bottom >> h >> w >> l >> x >> y >> z >> ry;
+    ss >> type >> trunc >> occ >> alpha >> left >> top >> right >> bottom >>
+        h >> w >> l >> x >> y >> z >> ry;
     if (ss >> rx) ss >> rz;
 
     // 局部顶点定义
@@ -1916,8 +2234,10 @@ void GenPromptPoint::VerifyKITTILabelInPointCloud(int64_t timestamp,
     float half_w = w / 2.0f;
     float h_full = h;
     std::vector<Eigen::Vector3f> corners_local = {
-        {half_l, -h_full, half_w},  {half_l, -h_full, -half_w},  {half_l, 0, -half_w},  {half_l, 0, half_w},
-        {-half_l, -h_full, half_w}, {-half_l, -h_full, -half_w}, {-half_l, 0, -half_w}, {-half_l, 0, half_w}};
+        {half_l, -h_full, half_w},  {half_l, -h_full, -half_w},
+        {half_l, 0, -half_w},       {half_l, 0, half_w},
+        {-half_l, -h_full, half_w}, {-half_l, -h_full, -half_w},
+        {-half_l, 0, -half_w},      {-half_l, 0, half_w}};
 
     Eigen::Vector3f T(x, y, z);
 
@@ -1926,38 +2246,45 @@ void GenPromptPoint::VerifyKITTILabelInPointCloud(int64_t timestamp,
     q.setRPY(rx, ry, rz);
     tf2::Matrix3x3 mat(q);
     Eigen::Matrix3f R_6dof;
-    R_6dof << mat[0][0], mat[0][1], mat[0][2], mat[1][0], mat[1][1], mat[1][2], mat[2][0], mat[2][1], mat[2][2];
+    R_6dof << mat[0][0], mat[0][1], mat[0][2], mat[1][0], mat[1][1], mat[1][2],
+        mat[2][0], mat[2][1], mat[2][2];
 
     // A. 计算雷达系下的底面中心 (BottomCenter)
     Eigen::Vector3f center_lidar_bottom =
-        lcam2lidar.linear().cast<float>() * T + lcam2lidar.translation().cast<float>();
+        lcam2lidar.linear().cast<float>() * T +
+        lcam2lidar.translation().cast<float>();
 
     // B. 计算雷达系下的几何中心 (GeoCenter)
     Eigen::Vector3f geometric_center_local(0.0f, -h_full / 2.0f, 0.0f);
     Eigen::Vector3f geometric_center_cam = R_6dof * geometric_center_local + T;
     Eigen::Vector3f center_lidar_geo =
-        lcam2lidar.linear().cast<float>() * geometric_center_cam + lcam2lidar.translation().cast<float>();
+        lcam2lidar.linear().cast<float>() * geometric_center_cam +
+        lcam2lidar.translation().cast<float>();
 
     // C. 计算雷达系下的旋转角
     Eigen::Matrix3f R_lidar = lcam2lidar.linear().cast<float>() * R_6dof;
-    tf2::Matrix3x3 mat_lidar(R_lidar(0, 0), R_lidar(0, 1), R_lidar(0, 2), R_lidar(1, 0), R_lidar(1, 1), R_lidar(1, 2),
+    tf2::Matrix3x3 mat_lidar(R_lidar(0, 0), R_lidar(0, 1), R_lidar(0, 2),
+                             R_lidar(1, 0), R_lidar(1, 1), R_lidar(1, 2),
                              R_lidar(2, 0), R_lidar(2, 1), R_lidar(2, 2));
     double rx_l, ry_l, rz_l;
     mat_lidar.getRPY(rx_l, ry_l, rz_l);
 
     // ==================== 3. 打印详细日志 (雷达系) ====================
     INFO("Box [{}] LiDAR Verification Details:", type);
-    INFO("  -> BottomCenter (LiDAR): X:{:.3f}, Y:{:.3f}, Z:{:.3f}", center_lidar_bottom.x(), center_lidar_bottom.y(),
+    INFO("  -> BottomCenter (LiDAR): X:{:.3f}, Y:{:.3f}, Z:{:.3f}",
+         center_lidar_bottom.x(), center_lidar_bottom.y(),
          center_lidar_bottom.z());
-    INFO("  -> GeoCenter    (LiDAR): X:{:.3f}, Y:{:.3f}, Z:{:.3f}", center_lidar_geo.x(), center_lidar_geo.y(),
-         center_lidar_geo.z());
-    INFO("  -> Rotation RPY (LiDAR): rx:{:.3f}, ry:{:.3f}, rz:{:.3f}", rx_l, ry_l, rz_l);
+    INFO("  -> GeoCenter    (LiDAR): X:{:.3f}, Y:{:.3f}, Z:{:.3f}",
+         center_lidar_geo.x(), center_lidar_geo.y(), center_lidar_geo.z());
+    INFO("  -> Rotation RPY (LiDAR): rx:{:.3f}, ry:{:.3f}, rz:{:.3f}", rx_l,
+         ry_l, rz_l);
 
     // 计算 8 个顶点坐标
     std::vector<Eigen::Vector3f> corners_comp_lidar;
     for (size_t i = 0; i < corners_local.size(); ++i) {
       Eigen::Vector3f pt_cam = R_6dof * corners_local[i] + T;
-      Eigen::Vector3f pt_lidar = lcam2lidar.linear().cast<float>() * pt_cam + lcam2lidar.translation().cast<float>();
+      Eigen::Vector3f pt_lidar = lcam2lidar.linear().cast<float>() * pt_cam +
+                                 lcam2lidar.translation().cast<float>();
       corners_comp_lidar.push_back(pt_lidar);
     }
 
@@ -1967,26 +2294,33 @@ void GenPromptPoint::VerifyKITTILabelInPointCloud(int64_t timestamp,
     // ==================== [新增] 绘制车头指示针 ====================
     // 提取相机坐标系下的前向向量 (X轴)
     Eigen::Vector3f v_fwd_cam(R_6dof(0, 0), R_6dof(1, 0), R_6dof(2, 0));
-    // 计算前脸中心：在局部坐标系中，X向是 half_l，Y向取几何中心 (-h_full / 2.0f)
-    Eigen::Vector3f f_cnt_cam = T + R_6dof * Eigen::Vector3f(half_l, -h_full / 2.0f, 0.0f);
+    // 计算前脸中心：在局部坐标系中，X向是 half_l，Y向取几何中心 (-h_full
+    // / 2.0f)
+    Eigen::Vector3f f_cnt_cam =
+        T + R_6dof * Eigen::Vector3f(half_l, -h_full / 2.0f, 0.0f);
     // 针尖向外延伸 2 米
     Eigen::Vector3f tip_cam = f_cnt_cam + 2.0f * v_fwd_cam;
 
     // 转换到雷达坐标系
     Eigen::Vector3f f_cnt_lidar =
-        lcam2lidar.linear().cast<float>() * f_cnt_cam + lcam2lidar.translation().cast<float>();
-    Eigen::Vector3f tip_lidar = lcam2lidar.linear().cast<float>() * tip_cam + lcam2lidar.translation().cast<float>();
+        lcam2lidar.linear().cast<float>() * f_cnt_cam +
+        lcam2lidar.translation().cast<float>();
+    Eigen::Vector3f tip_lidar = lcam2lidar.linear().cast<float>() * tip_cam +
+                                lcam2lidar.translation().cast<float>();
 
     // 绘制亮绿色指示针
     draw_line(f_cnt_lidar, tip_lidar, 0, 255, 0);
 
-    // ==================== 4. 绘制标准 KITTI 框 (红色，对照组) ====================
+    // ==================== 4. 绘制标准 KITTI 框 (红色，对照组)
+    // ====================
     Eigen::Matrix3f R_y;
-    R_y << std::cos(ry), 0, std::sin(ry), 0, 1, 0, -std::sin(ry), 0, std::cos(ry);
+    R_y << std::cos(ry), 0, std::sin(ry), 0, 1, 0, -std::sin(ry), 0,
+        std::cos(ry);
     std::vector<Eigen::Vector3f> corners_kitti_lidar;
     for (const auto& pt_local : corners_local) {
       Eigen::Vector3f pt_cam = R_y * pt_local + T;
-      Eigen::Vector3f pt_lidar = lcam2lidar.linear().cast<float>() * pt_cam + lcam2lidar.translation().cast<float>();
+      Eigen::Vector3f pt_lidar = lcam2lidar.linear().cast<float>() * pt_cam +
+                                 lcam2lidar.translation().cast<float>();
       corners_kitti_lidar.push_back(pt_lidar);
     }
     draw_box_edges(corners_kitti_lidar, 255, 0, 0);
@@ -1999,21 +2333,25 @@ void GenPromptPoint::VerifyKITTILabelInPointCloud(int64_t timestamp,
   vis_cloud->height = 1;
   vis_cloud->is_dense = true;
 
-  std::string save_path = save_folder + "/" + std::to_string(timestamp) + "_verify.pcd";
+  std::string save_path =
+      save_folder + "/" + std::to_string(timestamp) + "_verify.pcd";
   pcl::io::savePCDFileBinary(save_path, *vis_cloud);
   INFO("Verified KITTI Label in LiDAR Frame & Saved PCD: {}", save_path);
 }
 
-void GenPromptPoint::GenerateCameraExtrinsic(int64_t timestamp, int width, int height,
-                                             const Eigen::Matrix4f& tf_map_to_lidar) {
+void GenPromptPoint::GenerateCameraExtrinsic(
+    int64_t timestamp, int width, int height,
+    const Eigen::Matrix4f& tf_map_to_lidar) {
   INFO("Generate Extrinsic: {}", timestamp);
   // 路径生成逻辑保持不变
-  std::string config_dir = annotation_status_.data_record_root_folder + "/camera_config";
+  std::string config_dir =
+      annotation_status_.data_record_root_folder + "/camera_config";
   if (!std::filesystem::exists(config_dir)) {
     std::filesystem::create_directories(config_dir);
   }
 
-  std::string json_path = config_dir + "/" + std::to_string(timestamp) + ".json";
+  std::string json_path =
+      config_dir + "/" + std::to_string(timestamp) + ".json";
   std::ofstream ofs(json_path);
   if (!ofs.is_open()) {
     ERROR("Failed to create camera_config json at {}", json_path);
@@ -2021,7 +2359,8 @@ void GenPromptPoint::GenerateCameraExtrinsic(int64_t timestamp, int width, int h
   }
 
   // 获取外参: Lidar -> Camera
-  Eigen::Isometry3d tf_lidar2cam = annotation_status_.isometry_lcam2lidar.inverse();
+  Eigen::Isometry3d tf_lidar2cam =
+      annotation_status_.isometry_lcam2lidar.inverse();
   Eigen::Matrix4f ext = tf_lidar2cam.matrix().cast<float>();
 
   // 获取内参
@@ -2085,7 +2424,8 @@ void GenPromptPoint::GenerateCameraExtrinsic(int64_t timestamp, int width, int h
     INFO("Check tf_lidar_to_map is Identity");
   }
 
-  // 3. 写入最后的 rowMajor 标志 (不管上面有没有写 tf_map_to_lidar，前面都要加逗号)
+  // 3. 写入最后的 rowMajor 标志 (不管上面有没有写
+  // tf_map_to_lidar，前面都要加逗号)
   ofs << ",\n"
       << "    \"rowMajor\": false\n"
       << "  }\n"
@@ -2094,19 +2434,24 @@ void GenPromptPoint::GenerateCameraExtrinsic(int64_t timestamp, int width, int h
   ofs.close();
 }
 
-bool GenPromptPoint::GetMapToCameraAndLidarTf(const rclcpp::Time& img_time, Eigen::Matrix4f& out_tf_map_to_cam,
-                                              Eigen::Matrix4f& out_tf_map_to_lidar) {
+bool GenPromptPoint::GetMapToCameraAndLidarTf(
+    const rclcpp::Time& img_time, Eigen::Matrix4f& out_tf_map_to_cam,
+    Eigen::Matrix4f& out_tf_map_to_lidar) {
   std::string fixed_frame = ConstValue::kInsMap;
   try {
     // 1. 尝试直接查询 Map -> CameraLeft
     geometry_msgs::msg::TransformStamped tf_msg = tf_buffer_->lookupTransform(
-        ConstValue::kCameraLeftLink, fixed_frame, img_time, rclcpp::Duration::from_seconds(0.02));
+        ConstValue::kCameraLeftLink, fixed_frame, img_time,
+        rclcpp::Duration::from_seconds(0.02));
 
     Eigen::Affine3d tf_map_to_cam_affine = tf2::transformToEigen(tf_msg);
     out_tf_map_to_cam = tf_map_to_cam_affine.matrix().cast<float>();
 
     // 2. 利用静态外参计算 Map -> Lidar
-    out_tf_map_to_lidar = (annotation_status_.isometry_lcam2lidar * tf_map_to_cam_affine).matrix().cast<float>();
+    out_tf_map_to_lidar =
+        (annotation_status_.isometry_lcam2lidar * tf_map_to_cam_affine)
+            .matrix()
+            .cast<float>();
     return true;
 
   } catch (tf2::TransformException& ex) {
@@ -2114,17 +2459,20 @@ bool GenPromptPoint::GetMapToCameraAndLidarTf(const rclcpp::Time& img_time, Eige
     std::string ins_frame = ConstValue::kInsLink;
     try {
       geometry_msgs::msg::TransformStamped tf_ins_msg =
-          tf_buffer_->lookupTransform(fixed_frame, ins_frame, img_time, rclcpp::Duration::from_seconds(0.03));
+          tf_buffer_->lookupTransform(fixed_frame, ins_frame, img_time,
+                                      rclcpp::Duration::from_seconds(0.03));
 
       Eigen::Isometry3d iso_ins_to_map = tf2::transformToEigen(tf_ins_msg);
 
       // T_cam_to_map = T_ins_to_map * T_lidar_to_ins * T_cam_to_lidar
       Eigen::Isometry3d iso_lcam_to_map =
-          iso_ins_to_map * annotation_status_.isometry_lidar2ins * annotation_status_.isometry_lcam2lidar;
+          iso_ins_to_map * annotation_status_.isometry_lidar2ins *
+          annotation_status_.isometry_lcam2lidar;
       out_tf_map_to_cam = iso_lcam_to_map.inverse().matrix().cast<float>();
 
       // T_lidar_to_map = T_ins_to_map * T_lidar_to_ins
-      Eigen::Isometry3d iso_lidar_to_map = iso_ins_to_map * annotation_status_.isometry_lidar2ins;
+      Eigen::Isometry3d iso_lidar_to_map =
+          iso_ins_to_map * annotation_status_.isometry_lidar2ins;
       out_tf_map_to_lidar = iso_lidar_to_map.inverse().matrix().cast<float>();
 
       WARN("Direct TF Map->Camera failed. Fallback to Map->InsLink used.");
@@ -2154,7 +2502,8 @@ std::string GenPromptPoint::get_current_localtime_str() {
   return ss.str();
 }
 
-void GenPromptPoint::print_matrix_as_numpy(const std::vector<double>& data, const int rows, const int cols) {
+void GenPromptPoint::print_matrix_as_numpy(const std::vector<double>& data,
+                                           const int rows, const int cols) {
   INFO("Dimensions: {} rows x {} cols", rows, cols);
   INFO("Matrix Values:");
   size_t idx = 0;
@@ -2163,7 +2512,8 @@ void GenPromptPoint::print_matrix_as_numpy(const std::vector<double>& data, cons
   const int precision = 4;
   for (int i = 0; i < rows; ++i) {
     std::stringstream ss;
-    // Numpy 风格：第一行开头是 "[[", 后续行开头是 " [" (这就产生了一个空格的缩进，视觉对齐)
+    // Numpy 风格：第一行开头是 "[[", 后续行开头是 " ["
+    // (这就产生了一个空格的缩进，视觉对齐)
     if (i == 0) {
       ss << "[[";
     } else {
@@ -2172,10 +2522,12 @@ void GenPromptPoint::print_matrix_as_numpy(const std::vector<double>& data, cons
     for (int j = 0; j < cols; ++j) {
       if (idx < data.size()) {
         // 使用 fixed 和 setprecision 控制小数位，setw 控制对齐
-        ss << std::fixed << std::setprecision(precision) << std::setw(width) << data[idx];
+        ss << std::fixed << std::setprecision(precision) << std::setw(width)
+           << data[idx];
 
-        // 只有不是最后一列时才加逗号(Numpy 其实不加逗号，只加空格，但为了清晰保留空格即可)
-        // 如果你严格想要 Numpy 纯数字风格，就不加逗号，只留空格
+        // 只有不是最后一列时才加逗号(Numpy
+        // 其实不加逗号，只加空格，但为了清晰保留空格即可) 如果你严格想要 Numpy
+        // 纯数字风格，就不加逗号，只留空格
         if (j < cols - 1) {
           ss << " ";
         }
@@ -2193,22 +2545,27 @@ void GenPromptPoint::print_matrix_as_numpy(const std::vector<double>& data, cons
   }
 }
 
-void GenPromptPoint::print_transform_eigen_isometry(const std::string& name, const Eigen::Isometry3d& transform) {
+void GenPromptPoint::print_transform_eigen_isometry(
+    const std::string& name, const Eigen::Isometry3d& transform) {
   // 1. 提取平移
   auto translation = transform.translation();
 
   // 2. 提取旋转并转换为欧拉角 (使用 TF2 工具类更稳定，避免 Eigen 的多解问题)
   // 将 Eigen 旋转矩阵构造为 tf2 矩阵
-  tf2::Matrix3x3 mat(transform(0, 0), transform(0, 1), transform(0, 2), transform(1, 0), transform(1, 1),
-                     transform(1, 2), transform(2, 0), transform(2, 1), transform(2, 2));
+  tf2::Matrix3x3 mat(transform(0, 0), transform(0, 1), transform(0, 2),
+                     transform(1, 0), transform(1, 1), transform(1, 2),
+                     transform(2, 0), transform(2, 1), transform(2, 2));
 
   double roll, pitch, yaw;
   mat.getRPY(roll, pitch, yaw);
 
   // 4. 打印日志
-  // 格式示例: [TF] Lidar->Camera | T:[1.50, 0.20, 0.05] | R(deg):[0.00, 0.00, 90.00]
-  INFO("[TF] {} | T:[{:.3f}, {:.3f}, {:.3f}] | R(deg):[{:.3f}, {:.3f}, {:.3f}]", name, translation.x(), translation.y(),
-       translation.z(), roll * ConstValue::kRad2Deg, pitch * ConstValue::kRad2Deg, yaw * ConstValue::kRad2Deg);
+  // 格式示例: [TF] Lidar->Camera | T:[1.50, 0.20, 0.05] | R(deg):[0.00,
+  // 0.00, 90.00]
+  INFO("[TF] {} | T:[{:.3f}, {:.3f}, {:.3f}] | R(deg):[{:.3f}, {:.3f}, {:.3f}]",
+       name, translation.x(), translation.y(), translation.z(),
+       roll * ConstValue::kRad2Deg, pitch * ConstValue::kRad2Deg,
+       yaw * ConstValue::kRad2Deg);
 }
 
 }  // namespace automatic_annotation

@@ -57,9 +57,18 @@ struct UndistortedLivoxPoint {
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 } EIGEN_ALIGN16;
 
+struct PointXYZIT {
+  PCL_ADD_POINT4D;
+  float intensity;
+  float timestamp;  // 相对时间差（年龄），单位：秒
+
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+} EIGEN_ALIGN16;
+
 struct BoundingBox {
   // === 1. 基础属性 (对应 XML 外层 item) ===
-  std::string object_type;  // 对应 <objectType> (例如: "Sand", "Distance Marker")
+  std::string
+      object_type;  // 对应 <objectType> (例如: "Sand", "Distance Marker")
 
   // 尺寸 (Dimensions)
   double h = 0.0;  // 对应 <h> (Height)
@@ -120,11 +129,10 @@ struct AutoAnnotationConfig {
   bool generate_semantic_mask = false;  // 是否生成语义分割 Mask
   bool generate_kitti_label = true;     // 是否生成 KITTI 格式 txt 标签
   bool generate_nusc_label = false;     // 是否收集 NuScenes 格式数据
-  bool generate_xtreme1_json = true;   // 是否生成用于 Xtreme1 的标定 json
-  bool enable_visual_verify = false;    // 是否生成用于人类观测的 2D/3D 投影画框图
+  bool generate_xtreme1_json = true;    // 是否生成用于 Xtreme1 的标定 json
+  bool enable_visual_verify = false;  // 是否生成用于人类观测的 2D/3D 投影画框图
   std::string global_pc_map_addr;
   std::string pc_annotation_file_addr;
-
 
   double tf_wait_timeout_sec = 3.0;
   Eigen::Isometry3d default_isometry_lcam2lidar = Eigen::Isometry3d::Identity();
@@ -152,8 +160,7 @@ struct AutoAnnotationStatus {
   // 点云缓存
   std::deque<pcl::PointCloud<LivoxPoint>::Ptr> queue_original;
   std::deque<pcl::PointCloud<UndistortedLivoxPoint>::Ptr> queue_undistorted;
-  pcl::PointCloud<LivoxPoint>::Ptr latest_accumulated_cloud_original;
-  pcl::PointCloud<UndistortedLivoxPoint>::Ptr latest_accumulated_cloud_undistorted;
+  pcl::PointCloud<PointXYZIT>::Ptr latest_accumulated_cloud;
   rclcpp::Time latest_cloud_timestamp;
   // 全局地图缓存
   pcl::PointCloud<pcl::PointXYZ>::Ptr global_map = nullptr;
@@ -191,15 +198,21 @@ class GenPromptPoint {
 
  private:
   rclcpp::Node::SharedPtr node_ = nullptr;
-  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pointcloud_sub_ = nullptr;
-  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr left_image_sub_ = nullptr;
-  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr right_image_sub_ = nullptr;
-  rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr left_camera_intrinsics_sub_ = nullptr;
-  rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr right_camera_intrinsics_sub_ = nullptr;
+  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr
+      pointcloud_sub_ = nullptr;
+  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr left_image_sub_ =
+      nullptr;
+  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr right_image_sub_ =
+      nullptr;
+  rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr
+      left_camera_intrinsics_sub_ = nullptr;
+  rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr
+      right_camera_intrinsics_sub_ = nullptr;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_ = nullptr;
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_ = nullptr;
   rclcpp::TimerBase::SharedPtr tf_check_timer_;
-  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr accumulated_pc_pub_ = nullptr;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr
+      accumulated_pc_pub_ = nullptr;
   rclcpp::CallbackGroup::SharedPtr callback_group_lidar_ = nullptr;
   rclcpp::CallbackGroup::SharedPtr callback_group_camera_ = nullptr;
 
@@ -217,8 +230,9 @@ class GenPromptPoint {
 
   // 初始化相关的成员函数
   void InitConfigFromParamsServer();
-  void InitDefaultTfSettings();                                                  // 初始化默认外参
-  Eigen::Isometry3d ConvertXYZRPYToIsometry(const std::vector<double>& params);  // 将数组转换为变换矩阵
+  void InitDefaultTfSettings();  // 初始化默认外参
+  Eigen::Isometry3d ConvertXYZRPYToIsometry(
+      const std::vector<double>& params);  // 将数组转换为变换矩阵
   void InitGlobalMapAndLabelAddr();
   void InitPointCloudTopic();
   void InitPointCloudSettings();
@@ -227,7 +241,8 @@ class GenPromptPoint {
   void InitCameraIntrinsicsTopics();
   void InitSaveFolder();
   void InitAutoAnnotation();
-  bool EnsureDirectoryWithFullPermissions(const std::filesystem::path& dir_path);
+  bool EnsureDirectoryWithFullPermissions(
+      const std::filesystem::path& dir_path);
   void InitMapAndLabel();
   void InitClassMappingAndReflact();
   void InitPublishAndSubscription();
@@ -243,14 +258,17 @@ class GenPromptPoint {
   // 业务函数
   void HandleLeftImageMsg(const sensor_msgs::msg::Image::SharedPtr msg);
   void HandleRightImageMsg(const sensor_msgs::msg::Image::SharedPtr msg);
-  bool LookUpTransform(const std::string& target_frame, const std::string& source_frame,
+  bool LookUpTransform(const std::string& target_frame,
+                       const std::string& source_frame,
                        geometry_msgs::msg::TransformStamped& out_transform);
   void ExtractCloudsFromBoxes();
   void LoadLabelsFromXML(const std::string& xml_path);
   // 将 ROS Image 消息转换为 OpenCV Mat，支持压缩格式和未压缩格式
   cv::Mat ConvertRosImageToCvMat(const sensor_msgs::msg::Image::SharedPtr& msg);
-  void SaveOriginImageToFile(const sensor_msgs::msg::Image::SharedPtr& msg, const cv::Mat& fig,
-                             const std::string& save_dir, const std::string& file_name_before_stamp, int64_t timestamp);
+  void SaveOriginImageToFile(const sensor_msgs::msg::Image::SharedPtr& msg,
+                             const cv::Mat& fig, const std::string& save_dir,
+                             const std::string& file_name_before_stamp,
+                             int64_t timestamp);
   /**
    * @brief 生成 KITTI Benchmark 格式的 2D/3D 目标检测标签并保存为 txt
    * @param timestamp 当前帧时间戳，用于文件命名
@@ -259,9 +277,11 @@ class GenPromptPoint {
    * @param intrinsics 相机内参
    * @param save_folder 标签保存的目录 (例如 label_2)
    */
-  void GenerateKITTILabel(int64_t timestamp, const cv::Mat& fig, const Eigen::Matrix4f& tf_map_to_cam,
-                          const std::vector<double>& intrinsics, const std::string& save_folder,
-                          const pcl::PointCloud<pcl::PointXYZI>::Ptr& cloud_in_cam);
+  void GenerateKITTILabel(int64_t timestamp, const cv::Mat& fig,
+                          const Eigen::Matrix4f& tf_map_to_cam,
+                          const std::vector<double>& intrinsics,
+                          const std::string& save_folder,
+                          const pcl::PointCloud<PointXYZIT>::Ptr& cloud_in_cam);
   /**
    * @brief 生成语义掩码
    * @param current_scan_depth 当前帧雷达生成的深度图 (用于判断动态遮挡)
@@ -269,8 +289,10 @@ class GenPromptPoint {
    * @param tf_map_to_cam 世界坐标系到相机坐标系的变换矩阵
    * @param out_semantic_mask 输出的语义掩码 (单通道 uint8)
    */
-  void GenerateSemanticMask(const cv::Mat& current_scan_depth, const std::vector<double>& intrinsics,
-                            const Eigen::Matrix4f& tf_map_to_cam, cv::Mat& out_semantic_mask);
+  void GenerateSemanticMask(const cv::Mat& current_scan_depth,
+                            const std::vector<double>& intrinsics,
+                            const Eigen::Matrix4f& tf_map_to_cam,
+                            cv::Mat& out_semantic_mask);
   /**
    * @brief 阻塞等待并获取与指定时间戳同步的点云
    * * @param target_time_ns 目标时间戳（通常是图像时间，纳秒）
@@ -278,7 +300,8 @@ class GenPromptPoint {
    * @return true 同步成功，out_cloud 已填充数据
    * @return false 同步超时失败，out_cloud 内容未定义
    */
-  bool WaitForSyncedPointCloud(const int64_t target_time_ns, pcl::PointCloud<pcl::PointXYZI>::Ptr& out_cloud);
+  bool WaitForSyncedPointCloud(const int64_t target_time_ns,
+                               pcl::PointCloud<PointXYZIT>::Ptr& out_cloud);
   /**
    * @brief 根据相机坐标系下的点云和原始图像，生成融合图和16位深度图
    * @param cloud_in_cam 输入：已转换到相机坐标系的点云
@@ -288,26 +311,33 @@ class GenPromptPoint {
    * @param out_raw_depth_u16 输出：16位深度图 (单位mm)，用于保存
    * @param out_raw_depth_f32 输出：32位浮点深度图 (单位mm)，用于语义掩码生成
    */
-  void GenerateDepthAndFusion(const pcl::PointCloud<pcl::PointXYZI>::Ptr& cloud_in_cam, const cv::Mat& original_image,
-                              const std::vector<double>& intrinsic_data, cv::Mat& out_fused_image,
-                              cv::Mat& out_raw_depth_u16, cv::Mat& out_raw_depth_f32);
+  void GenerateDepthAndFusion(
+      const pcl::PointCloud<PointXYZIT>::Ptr& cloud_in_cam,
+      const cv::Mat& original_image, const std::vector<double>& intrinsic_data,
+      cv::Mat& out_fused_image, cv::Mat& out_raw_depth_u16,
+      cv::Mat& out_raw_depth_f32);
   /**
    * @brief 生成用于人类观测的可视化图像 (包含彩色 Mask 和 3D Box 投影)
    */
-  void GenerateSemanticVisualization(const cv::Mat& original_image, const cv::Mat& semantic_mask,
-                                     const Eigen::Matrix4f& tf_map_to_cam, const std::vector<double>& intrinsics,
+  void GenerateSemanticVisualization(const cv::Mat& original_image,
+                                     const cv::Mat& semantic_mask,
+                                     const Eigen::Matrix4f& tf_map_to_cam,
+                                     const std::vector<double>& intrinsics,
                                      cv::Mat& out_vis_image);
 
   /**
-   * @brief 读取生成的 KITTI txt 标签，逆向解析并在图像上绘制 2D 和 3D 框进行验证
+   * @brief 读取生成的 KITTI txt 标签，逆向解析并在图像上绘制 2D 和 3D
+   * 框进行验证
    * @param timestamp 当前帧时间戳 (用于读取 txt)
    * @param original_image 原始图像
    * @param intrinsics 相机内参
    * @param label_folder txt 标签所在的文件夹
    * @param out_vis_image 输出的验证图像
    */
-  void VerifyKITTILabel(int64_t timestamp, const cv::Mat& original_image, const std::vector<double>& intrinsics,
-                        const std::string& label_folder, cv::Mat& out_vis_image);
+  void VerifyKITTILabel(int64_t timestamp, const cv::Mat& original_image,
+                        const std::vector<double>& intrinsics,
+                        const std::string& label_folder,
+                        cv::Mat& out_vis_image);
   /**
    * @brief 在雷达坐标系点云中验证 KITTI 标签，模拟 训练模型的 Dataloader
    * @param timestamp 时间戳
@@ -316,11 +346,11 @@ class GenPromptPoint {
    * @param label_folder txt 标签存放路径
    * @param save_folder 验证 PCD 保存路径
    */
-  void VerifyKITTILabelInPointCloud(int64_t timestamp,
-                                    const pcl::PointCloud<pcl::PointXYZI>::Ptr& cloud_in_lidar_frame,
-                                    const Eigen::Isometry3d& lcam2lidar,
-                                    const std::string& label_folder,
-                                    const std::string& save_folder);
+  void VerifyKITTILabelInPointCloud(
+      int64_t timestamp,
+      const pcl::PointCloud<PointXYZIT>::Ptr& cloud_in_lidar_frame,
+      const Eigen::Isometry3d& lcam2lidar, const std::string& label_folder,
+      const std::string& save_folder);
   /**
    * @brief
    * @param target_frame 目标坐标系 (例如相机坐标系 kCameraLeftLink)
@@ -328,21 +358,27 @@ class GenPromptPoint {
    * @param source_frame 源坐标系 (例如雷达坐标系 kLidarLink)
    * @param source_time  源时间 (例如点云采集时间)
    * @param fixed_frame  固定参考系 (例如世界/里程计坐标系 kInsMap)
-   * @param fallback_extrinsic 如果插值失败，回退使用的静态外参 (Source -> Target)
+   * @param fallback_extrinsic 如果插值失败，回退使用的静态外参 (Source ->
+   * Target)
    * @param out_tf_mat   输出的 4x4 浮点型变换矩阵
    * @return true        插值成功
    * @return false       插值失败，已使用 fallback_extrinsic 填充 out_tf_mat
    */
-  bool GetTimeInterpolatedTransform(const std::string& target_frame, const rclcpp::Time& target_time,
-                                    const std::string& source_frame, const rclcpp::Time& source_time,
-                                    const std::string& fixed_frame, const Eigen::Isometry3d& fallback_extrinsic,
+  bool GetTimeInterpolatedTransform(const std::string& target_frame,
+                                    const rclcpp::Time& target_time,
+                                    const std::string& source_frame,
+                                    const rclcpp::Time& source_time,
+                                    const std::string& fixed_frame,
+                                    const Eigen::Isometry3d& fallback_extrinsic,
                                     Eigen::Matrix4f& out_tf_mat);
-  void GenerateCameraExtrinsic(int64_t timestamp, int width, int height, const Eigen::Matrix4f& tf_map_to_lidar);
-  bool GetMapToCameraAndLidarTf(const rclcpp::Time& img_time, 
-                                Eigen::Matrix4f& out_tf_map_to_cam, 
+  void GenerateCameraExtrinsic(int64_t timestamp, int width, int height,
+                               const Eigen::Matrix4f& tf_map_to_lidar);
+  bool GetMapToCameraAndLidarTf(const rclcpp::Time& img_time,
+                                Eigen::Matrix4f& out_tf_map_to_cam,
                                 Eigen::Matrix4f& out_tf_map_to_lidar);
   template <typename T>
-  typename pcl::PointCloud<T>::Ptr ConvertMsgToPCLPointCloud(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+  typename pcl::PointCloud<T>::Ptr ConvertMsgToPCLPointCloud(
+      const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     // 3. 将 ROS PointCloud2 转换为 PCL PointCloud
     typename pcl::PointCloud<T>::Ptr pcl_cloud(new pcl::PointCloud<T>);
     pcl::fromROSMsg(*msg, *pcl_cloud);
@@ -354,9 +390,10 @@ class GenPromptPoint {
   }
 
   template <typename PointT>
-  void AccumulatePointCloudBack(const typename pcl::PointCloud<PointT>::Ptr& input_cloud,
-                                std::deque<typename pcl::PointCloud<PointT>::Ptr>& cloud_queue,
-                                const std_msgs::msg::Header& header) {
+  void AccumulatePointCloudBack(
+      const typename pcl::PointCloud<PointT>::Ptr& input_cloud,
+      std::deque<typename pcl::PointCloud<PointT>::Ptr>& cloud_queue,
+      const std_msgs::msg::Header& header) {
     auto start_time = std::chrono::high_resolution_clock::now();
     if (!input_cloud || input_cloud->empty()) {
       return;
@@ -372,7 +409,8 @@ class GenPromptPoint {
     bool has_transform = false;
     try {
       geometry_msgs::msg::TransformStamped tf_msg =
-          tf_buffer_->lookupTransform(fixed_frame, sensor_frame, header.stamp, rclcpp::Duration::from_seconds(0.02));
+          tf_buffer_->lookupTransform(fixed_frame, sensor_frame, header.stamp,
+                                      rclcpp::Duration::from_seconds(0.02));
 
       Eigen::Affine3d affine = tf2::transformToEigen(tf_msg);
       transform_lidar_to_map = affine.matrix().cast<float>();
@@ -380,120 +418,175 @@ class GenPromptPoint {
     } catch (tf2::TransformException& ex) {
       try {
         geometry_msgs::msg::TransformStamped tf_ins_msg =
-            tf_buffer_->lookupTransform(fixed_frame, ins_frame, header.stamp, rclcpp::Duration::from_seconds(0.05));
+            tf_buffer_->lookupTransform(fixed_frame, ins_frame, header.stamp,
+                                        rclcpp::Duration::from_seconds(0.05));
         auto end_time1 = std::chrono::high_resolution_clock::now();
-        auto duration1 = std::chrono::duration_cast<std::chrono::microseconds>(end_time1 - start_time);
+        auto duration1 = std::chrono::duration_cast<std::chrono::microseconds>(
+            end_time1 - start_time);
         double ms1 = duration1.count() / 1000.0;
-        INFO("AccumulatePointCloud From Begin to Finish Step 1 lookupTransform INSmap and Inslink took {} ms", ms1);
+        INFO(
+            "AccumulatePointCloud From Begin to Finish Step 1 lookupTransform "
+            "INSmap and Inslink took {} ms",
+            ms1);
 
         Eigen::Isometry3d iso_ins_to_map = tf2::transformToEigen(tf_ins_msg);
 
-        // 使用我们在 CheckTfCallback 中维护的 Lidar -> InsLink 外参 (包含默认值降级)
-        // T_lidar_to_map = T_ins_to_map * T_lidar_to_ins
-        Eigen::Isometry3d iso_lidar_to_map = iso_ins_to_map * annotation_status_.isometry_lidar2ins;
+        // 使用我们在 CheckTfCallback 中维护的 Lidar -> InsLink 外参
+        // (包含默认值降级) T_lidar_to_map = T_ins_to_map * T_lidar_to_ins
+        Eigen::Isometry3d iso_lidar_to_map =
+            iso_ins_to_map * annotation_status_.isometry_lidar2ins;
 
         transform_lidar_to_map = iso_lidar_to_map.matrix().cast<float>();
         has_transform = true;
 
         // 打印降级警告，每 5 秒最多打印一次，防止刷屏
         THROTTLEWARN(5,
-                     "Direct TF {}->{} failed. Fallback: Map->InsLink(dynamic) * Lidar->InsLink(static/default) used.",
+                     "Direct TF {}->{} failed. Fallback: Map->InsLink(dynamic) "
+                     "* Lidar->InsLink(static/default) used.",
                      sensor_frame, fixed_frame);
       } catch (tf2::TransformException& ex2) {
         // 如果连定位 TF 都查不到，那就真的无法进行运动补偿了
-        THROTTLEWARN(5, "Accumulation failed: Both direct and fallback TF lookup failed. Error: {}", ex2.what());
+        THROTTLEWARN(5,
+                     "Accumulation failed: Both direct and fallback TF lookup "
+                     "failed. Error: {}",
+                     ex2.what());
         return;
       }
     }
     auto end_time1 = std::chrono::high_resolution_clock::now();
-    auto duration1 = std::chrono::duration_cast<std::chrono::microseconds>(end_time1 - start_time);
+    auto duration1 = std::chrono::duration_cast<std::chrono::microseconds>(
+        end_time1 - start_time);
     double ms1 = duration1.count() / 1000.0;
     INFO("AccumulatePointCloud From Begin to Finish Step 1 took {} ms", ms1);
     // ================= Step 2: 转换到 Map 帧并入队 =================
     if (has_transform) {
-      typename pcl::PointCloud<PointT>::Ptr cloud_in_map(new pcl::PointCloud<PointT>());
-      pcl::transformPointCloud(*input_cloud, *cloud_in_map, transform_lidar_to_map);
+      typename pcl::PointCloud<PointT>::Ptr cloud_in_map(
+          new pcl::PointCloud<PointT>());
+      pcl::transformPointCloud(*input_cloud, *cloud_in_map,
+                               transform_lidar_to_map);
 
       // 【修复1】给入队的点云赋予正确的时间戳和 frame_id，保持与 Front 一致
-      cloud_in_map->header.stamp = rclcpp::Time(header.stamp).nanoseconds() / 1000;  // PCL用微秒
+      cloud_in_map->header.stamp =
+          rclcpp::Time(header.stamp).nanoseconds() / 1000;  // PCL用微秒
       cloud_in_map->header.frame_id = fixed_frame;
 
       cloud_queue.push_back(cloud_in_map);
       auto end_time2 = std::chrono::high_resolution_clock::now();
-      auto duration2 = std::chrono::duration_cast<std::chrono::microseconds>(end_time2 - start_time);
+      auto duration2 = std::chrono::duration_cast<std::chrono::microseconds>(
+          end_time2 - start_time);
       double ms2 = duration2.count() / 1000.0;
       INFO("AccumulatePointCloud From Begin to Finish Step 2 took {} ms", ms2);
     }
     // ================= Step 3: 维护滑动窗口 =================
-    while (cloud_queue.size() > static_cast<size_t>(node_config_.target_accumulate_pc_num)) {
+    while (cloud_queue.size() >
+           static_cast<size_t>(node_config_.target_accumulate_pc_num)) {
       cloud_queue.pop_front();
     }
 
     auto end_time3 = std::chrono::high_resolution_clock::now();
-    auto duration3 = std::chrono::duration_cast<std::chrono::microseconds>(end_time3 - start_time);
+    auto duration3 = std::chrono::duration_cast<std::chrono::microseconds>(
+        end_time3 - start_time);
     double ms3 = duration3.count() / 1000.0;
     INFO("AccumulatePointCloud From Begin to Finish Step 3 took {} ms", ms3);
-    // ================= Step 4: 拼接并转换回当前帧 =================
+    // ================= Step 4: 拼接并转换回当前帧并注入时间戳
+    // =================
     if (!cloud_queue.empty()) {
-      typename pcl::PointCloud<PointT>::Ptr merged_in_map(new pcl::PointCloud<PointT>());
+      // 创建新的 5 维点云用于存放最终结果
+      pcl::PointCloud<PointXYZIT>::Ptr final_cloud_local(
+          new pcl::PointCloud<PointXYZIT>());
 
-      // 【优化】预分配内存，避免频繁扩容（参考你在 Front 中写的好习惯）
+      // 提取最新帧（目标帧）的绝对时间（秒）
+      double target_time_s = rclcpp::Time(header.stamp).nanoseconds() / 1e9;
+
+      // 预分配内存，避免频繁扩容
       size_t total_points = 0;
       for (const auto& frame : cloud_queue) total_points += frame->size();
-      merged_in_map->reserve(total_points);
+      final_cloud_local->reserve(total_points);
+
+      // 计算从 Map 到当前雷达系的逆变换
+      Eigen::Matrix4f transform_map_to_current_lidar =
+          transform_lidar_to_map.inverse();
 
       for (const auto& frame : cloud_queue) {
-        *merged_in_map += *frame;
-      }
+        // 计算当前历史帧的相对年龄
+        // PCL 的 header.stamp 存储的是微秒，需转为纳秒再转秒
+        double frame_time_s = (frame->header.stamp * 1000.0) / 1e9;
+        float age = static_cast<float>(target_time_s - frame_time_s);
 
-      Eigen::Matrix4f transform_map_to_current_lidar = transform_lidar_to_map.inverse();
-      typename pcl::PointCloud<PointT>::Ptr final_cloud_local(new pcl::PointCloud<PointT>());
-      pcl::transformPointCloud(*merged_in_map, *final_cloud_local, transform_map_to_current_lidar);
+        // 容错处理：防止由于系统时间抖动出现极小的负数
+        if (age < 0.0f) age = 0.0f;
+
+        // 将该帧点云从 Map 转到 最新一帧的雷达坐标系
+        typename pcl::PointCloud<PointT>::Ptr transformed_frame(
+            new pcl::PointCloud<PointT>());
+        pcl::transformPointCloud(*frame, *transformed_frame,
+                                 transform_map_to_current_lidar);
+
+        // 提取 XYZ 和 Intensity，强行注入 Age，存入 5维点云
+        for (const auto& pt : transformed_frame->points) {
+          PointXYZIT pt_5d;
+          pt_5d.x = pt.x;
+          pt_5d.y = pt.y;
+          pt_5d.z = pt.z;
+          pt_5d.intensity = pt.intensity;
+          pt_5d.timestamp = age;  // 注入相对时间差（如 0.0, 0.1, 0.2 ...）
+          final_cloud_local->push_back(pt_5d);
+        }
+      }
 
       auto end_time4 = std::chrono::high_resolution_clock::now();
-      double ms4 = std::chrono::duration_cast<std::chrono::microseconds>(end_time4 - start_time).count() / 1000.0;
-      INFO("AccumulatePointCloud From Begin to Finish Step 4 merge took {} ms", ms4);
+      double ms4 = std::chrono::duration_cast<std::chrono::microseconds>(
+                       end_time4 - start_time)
+                       .count() /
+                   1000.0;
+      INFO("AccumulatePointCloud Step 4 (Merge & Age Injection) took {:.2f} ms",
+           ms4);
 
-      // 更新全局缓存，供图像回调（WaitForSyncedPointCloud）使用！
-      uint64_t current_stamp_us = cloud_queue.back()->header.stamp;  // 最新帧的微秒时间戳
+      // 更新全局缓存，供图像回调使用（统一化处理）
+      uint64_t current_stamp_us = cloud_queue.back()->header.stamp;
+      final_cloud_local->header.stamp = current_stamp_us;
+      final_cloud_local->header.frame_id = sensor_frame;
+
       {
         std::lock_guard<std::mutex> lock(locks_.mutex_cache_cloud);
-
-        if constexpr (std::is_same_v<PointT, LivoxPoint>) {
-          annotation_status_.latest_accumulated_cloud_original = final_cloud_local;  // 0毫秒的指针移交
-          annotation_status_.latest_accumulated_cloud_original->header.stamp = current_stamp_us;
-        } else if constexpr (std::is_same_v<PointT, UndistortedLivoxPoint>) {
-          annotation_status_.latest_accumulated_cloud_undistorted = final_cloud_local;  // 0毫秒的指针移交
-          annotation_status_.latest_accumulated_cloud_undistorted->header.stamp = current_stamp_us;
-        }
+        annotation_status_.latest_accumulated_cloud =
+            final_cloud_local;  // 统一覆盖
         annotation_status_.latest_cloud_timestamp = header.stamp;
       }
+
       auto end_time5 = std::chrono::high_resolution_clock::now();
-      double ms5 = std::chrono::duration_cast<std::chrono::microseconds>(end_time5 - start_time).count() / 1000.0;
-      INFO("AccumulatePointCloud From Begin to Finish Step 4 Update took {} ms", ms5);
+      double ms5 = std::chrono::duration_cast<std::chrono::microseconds>(
+                       end_time5 - start_time)
+                       .count() /
+                   1000.0;
+      INFO("AccumulatePointCloud Step 4 Update cache took {:.2f} ms", ms5);
 
       // ================= Step 5: 发布 =================
       if (accumulated_pc_pub_) {
         sensor_msgs::msg::PointCloud2 output_msg;
-        pcl::toROSMsg(*final_cloud_local, output_msg);
+        pcl::toROSMsg(*final_cloud_local,
+                      output_msg);  // PCL 会自动打包 5 个维度
         output_msg.header = header;
         accumulated_pc_pub_->publish(output_msg);
       }
     }
     auto end_time = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
+        end_time - start_time);
     double ms = duration.count() / 1000.0;
     INFO("AccumulatePointCloud (Base: Latest) took {} ms", ms);
   }
 
   // 工具函数
   template <typename T>
-  T get_param_value_form_params_server(const std::string& name, const T& default_val) {
+  T get_param_value_form_params_server(const std::string& name,
+                                       const T& default_val) {
     if (!node_->has_parameter(name)) {
       node_->declare_parameter<T>(name, default_val);
     }
     T value = node_->get_parameter(name).get_value<T>();
-    // 如果是基本类型或字符串，正常打印值；如果是 vector 等复杂类型，只打印变量名
+    // 如果是基本类型或字符串，正常打印值；如果是 vector
+    // 等复杂类型，只打印变量名
     if constexpr (std::is_fundamental_v<T> || std::is_same_v<T, std::string>) {
       INFO("Parameter {} is set to {}", name, value);
     } else {
@@ -503,20 +596,30 @@ class GenPromptPoint {
     return value;
   }
   std::string get_current_localtime_str();
-  void print_matrix_as_numpy(const std::vector<double>& data, const int rows, const int cols);
-  void print_transform_eigen_isometry(const std::string& name, const Eigen::Isometry3d& transform);
+  void print_matrix_as_numpy(const std::vector<double>& data, const int rows,
+                             const int cols);
+  void print_transform_eigen_isometry(const std::string& name,
+                                      const Eigen::Isometry3d& transform);
 };
 
 }  // namespace automatic_annotation
 
 // 2. 【关键】向 PCL 系统注册必须在全局作用域
 // 注意：第一个参数要写完整的命名空间路径 automatic_annotation::LivoxPoint
-POINT_CLOUD_REGISTER_POINT_STRUCT(automatic_annotation::LivoxPoint,
-                                  (float, x, x)(float, y, y)(float, z, z)(float, intensity, intensity)(
-                                      uint8_t, tag, tag)(uint8_t, line, line)(uint32_t, timestamp, timestamp))
+POINT_CLOUD_REGISTER_POINT_STRUCT(
+    automatic_annotation::LivoxPoint,
+    (float, x, x)(float, y, y)(float, z, z)(float, intensity, intensity)(
+        uint8_t, tag, tag)(uint8_t, line, line)(uint32_t, timestamp, timestamp))
 
 // 注册宏必须放在全局命名空间
-POINT_CLOUD_REGISTER_POINT_STRUCT(automatic_annotation::UndistortedLivoxPoint,
-                                  (float, x, x)(float, y, y)(float, z, z)(float, intensity, intensity))
+POINT_CLOUD_REGISTER_POINT_STRUCT(
+    automatic_annotation::UndistortedLivoxPoint,
+    (float, x, x)(float, y, y)(float, z, z)(float, intensity, intensity))
+
+// 注册宏必须放在全局命名空间
+POINT_CLOUD_REGISTER_POINT_STRUCT(automatic_annotation::PointXYZIT,
+                                  (float, x, x)(float, y, y)(float, z, z)(
+                                      float, intensity,
+                                      intensity)(float, timestamp, timestamp))
 
 #endif  // AUTOMATIC_ANNOTATION_GEN_PROMPT_POINT_HPP
