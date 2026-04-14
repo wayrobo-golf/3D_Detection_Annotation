@@ -27,8 +27,8 @@ automatic_annotation_node:
     generate_nusc_label: false
     generate_xtreme1_json: true
     enable_visual_verify: true
-    global_pc_map_addr: "/home/keyaoli/Data/AutoAnnotation/MapAnnotation/bl_20260317/velodyne_points/data/colored_lidar_merged.pcd"
-    pc_annotation_file_addr: "/home/keyaoli/Data/AutoAnnotation/MapAnnotation/bl_20260317/tracklet_labels.xml"
+    global_pc_map_addr: "/home/keyaoli/Data/AutoAnnotation/MapAnnotation/xh_20260324/velodyne_points/data/colored_lidar_merged.pcd"
+    pc_annotation_file_addr: "/home/keyaoli/Data/AutoAnnotation/MapAnnotation/xh_20260324/tracklet_labels.xml"
 
     custom_record_folder_name: ""   # 为了自动化脚本可以传入scene标识
 
@@ -36,9 +36,9 @@ automatic_annotation_node:
     # 外参默认值格式: [x(米), y(米), z(米), roll(度), pitch(度), yaw(度)]
     # 以下值由 C++ 日志精准提取，完美匹配 tf_static 的四元数
     # baoli
-    default_tf_lcam_to_lidar: [0.070, 0.116, 0.071, -126.100, -1.000, -91.300]
+    # default_tf_lcam_to_lidar: [0.070, 0.116, 0.071, -126.100, -1.000, -91.300]
     default_tf_rcam_to_lidar: [0.070, -0.116, 0.071, -125.700, 0.500, -88.500]
-    default_tf_lidar_to_ins: [-0.347, 0.000, 1.277, -0.981, -0.378, -1.315]
+    # default_tf_lidar_to_ins: [-0.347, 0.000, 1.277, -0.981, -0.378, -1.315]
     # yenan
     # default_tf_lcam_to_lidar: [0.070000, 0.115999, 0.071299, -122.87, -0.20, -89.00]
     # default_tf_lidar_to_ins: [-0.336825, 0.004557, 1.299241, 1.88, -0.01, -2.60]
@@ -51,3 +51,9 @@ automatic_annotation_node:
     # 隐秀25
     # default_tf_lcam_to_lidar: [0.070000, 0.115999, 0.071299, -124.10, -0.00, -89.70]
     # default_tf_lidar_to_ins: [-0.336825, 0.004557, 1.299241, -0.03, -1.17, -3.23]
+    # dongzhuang
+    # default_tf_lcam_to_lidar: [0.070000, 0.115999, 0.071299, -121.90, -0.47, -89.90]
+    # default_tf_lidar_to_ins: [-0.336825, 0.004557, 1.299241, -0.73, -0.52, -0.93]
+    # xihu
+    default_tf_lcam_to_lidar: [0.070000, 0.115999, 0.071299, -121.30, 0.60, -89.30]
+    default_tf_lidar_to_ins: [-0.336825, 0.004557, 1.299241, -0.88, -0.16, -2.70]

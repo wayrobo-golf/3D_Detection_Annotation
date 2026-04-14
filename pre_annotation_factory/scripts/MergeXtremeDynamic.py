@@ -21,7 +21,7 @@ except ImportError:
 
 # ================= 配置区 =================
 # 1. Xtreme1 导出的标注数据根目录 (解压后的 Scene_XX 所在目录)
-XTREME_EXPORT_ROOT = Path("/home/keyaoli/Data/AutoAnnotation/Xtreme/ExportFromXtreme/BaoLi_20260305-20260402122402")
+XTREME_EXPORT_ROOT = Path("/home/keyaoli/Data/AutoAnnotation/Xtreme/ExportFromXtreme/BaoLi_20260305-20260411012156")
 
 # 2. 你的原始数据集归档目录 (_origin 后缀的那个文件夹)
 RAW_ARCHIVE_ROOT = Path("/home/keyaoli/Data/AutoAnnotation/Auto_Annotation_Origin/3DBox_Annotation_20260407181828_BaoLi_20260305_origin")
@@ -180,6 +180,14 @@ def parse_xtreme_to_kitti_lines(xtreme_json_path, config_file):
             
     return objects_to_write
 
+
+def has_non_empty_label(label_path):
+    if label_path is None or not Path(label_path).exists():
+        return False
+
+    with open(label_path, 'r', encoding='utf-8') as f:
+        return any(line.strip() for line in f)
+
 # ================= 编译流水线 =================
 def build_final_dataset(location_str):
     print(f"\n{'='*50}")
@@ -215,14 +223,20 @@ def build_final_dataset(location_str):
             pcd_path = scene_dir / "lidar_point_cloud_0" / f"{frame_id}.pcd"
             if not pcd_path.exists(): continue
             
+            raw_label_path = scene_dir / "label_2" / f"{frame_id}.txt"
             xtreme_json_path = xtreme_scene_dir / "result" / f"{frame_id}.json"
-            if has_xtreme_export and xtreme_json_path.exists():
-                label_source = "xtreme"
-                target_label_path = xtreme_json_path
+            if has_xtreme_export:
+                if xtreme_json_path.exists():
+                    label_source = "xtreme"
+                    target_label_path = xtreme_json_path
+                else:
+                    label_source = "empty"
+                    target_label_path = None
             else:
                 label_source = "raw"
-                target_label_path = scene_dir / "label_2" / f"{frame_id}.txt"
-                if not target_label_path.exists(): continue
+                target_label_path = raw_label_path
+                if not target_label_path.exists():
+                    continue
                 
             tasks.append({
                 "frame_id": frame_id,
@@ -230,7 +244,8 @@ def build_final_dataset(location_str):
                 "img_path": Path(img_matches[0]),
                 "pcd_path": pcd_path,
                 "label_source": label_source,
-                "label_path": target_label_path
+                "label_path": target_label_path,
+                "raw_label_path": raw_label_path
             })
 
     if not tasks:
@@ -242,7 +257,7 @@ def build_final_dataset(location_str):
     
     split_idx = int(len(tasks) * SPLIT_RATIO)
     train_ids, val_ids = [], []
-    xtreme_used_count, raw_used_count = 0, 0
+    xtreme_used_count, empty_used_count, raw_used_count = 0, 0, 0
 
     print(f"🔎 扫描完毕。共捕获 {len(tasks)} 帧有效数据，开始转换装配...")
 
@@ -260,6 +275,12 @@ def build_final_dataset(location_str):
             with open(out_label, 'w') as f:
                 f.writelines(kitti_lines)
             xtreme_used_count += 1
+        elif task["label_source"] == "empty":
+            with open(out_label, 'w', encoding='utf-8'):
+                pass
+            empty_used_count += 1
+            if has_non_empty_label(task["raw_label_path"]):
+                print(f"ℹ️ 帧 {frame_id} 在 Xtreme 场景中缺失导出 json，已按人工判空覆盖原始非空标注。")
         else:
             shutil.copy2(task["label_path"], out_label)
             raw_used_count += 1
@@ -287,7 +308,7 @@ def build_final_dataset(location_str):
         except Exception as e:
             print(f"⚠️ NuScenes Metadata 生成跳过: {e}")
 
-    print(f"\n✅ 编译完成！共使用 Xtreme精修: {xtreme_used_count}帧, 自动标注兜底: {raw_used_count}帧。")
+    print(f"\n✅ 编译完成！共使用 Xtreme精修: {xtreme_used_count}帧, 人工判空: {empty_used_count}帧, 自动标注兜底: {raw_used_count}帧。")
     print(f"📊 划分情况 -> 训练集: {len(train_ids)}帧，验证集: {len(val_ids)}帧。")
     
     print(f"📦 正在打包最终极训练数据集 (ZIP)...")

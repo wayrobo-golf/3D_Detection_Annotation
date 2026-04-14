@@ -15,7 +15,7 @@ namespace automatic_annotation {
     constexpr uint32_t kDefaultSizeofIntrinsic = 9;
     constexpr uint32_t kTargetPointCloudAccumulate = 10;
     constexpr uint32_t kCheckTfPeriodMs = 500;
-    constexpr int32_t kThresholdPcCheck = 50;
+    constexpr int32_t kThresholdPcCheck = 5;
     constexpr double kLidarToCameraMaxTimeDiff = 0.02;
     constexpr double kDefaultTfWaitTimeoutSec = 3.0;
     constexpr double kRad2Deg = 180.0 / M_PI;

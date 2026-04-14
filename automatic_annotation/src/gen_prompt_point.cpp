@@ -1645,8 +1645,7 @@ void GenPromptPoint::GenerateSemanticMask(const cv::Mat& current_scan_depth,
 }
 
 bool GenPromptPoint::WaitForSyncedPointCloud(
-    const int64_t target_time_ns,
-    pcl::PointCloud<PointXYZIT>::Ptr& out_cloud) {
+    const int64_t target_time_ns, pcl::PointCloud<PointXYZIT>::Ptr& out_cloud) {
   // 建议：缩短睡眠时间，增加重试次数。
   // 这样能更频繁地检查，第一时间截获点云，总等待时间不变。
   int max_retry_count = 100;
@@ -1948,7 +1947,7 @@ void GenPromptPoint::GenerateKITTILabel(
     if (dist_to_cam > 30.0f) {
       INFO(
           "--> Dropped! [{}] was discarded: bottom center distance to camera "
-          "({:.2f}m) > 20m.",
+          "({:.2f}m) > 30m.",
           box.object_type, dist_to_cam);
       continue;
     }

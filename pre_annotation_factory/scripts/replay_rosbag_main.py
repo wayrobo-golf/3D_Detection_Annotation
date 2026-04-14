@@ -23,7 +23,7 @@ from scipy.spatial.transform import Rotation as R
 WORKSPACE_PATH = "/home/keyaoli/Code/Wayrobo/3D_Detection_Annotation"
 
 # 2. 存放所有 bag 的根目录
-TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/BaoLi20260305"
+# TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/BaoLi20260305"
 # TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/BaoLi20260305_Debug"
 # TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/XiangXue20260323"
 # TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/XiangXue20260323_Debug"
@@ -32,6 +32,10 @@ TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/BaoLi20260305"
 # TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/Binjiang20260319"
 # TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/Binjiang20260319_Debug"
 # TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/YinXiu20260327"
+# TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/DongZhuang20260411/2026_4_11/extracted"
+# TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/DongZhuang20260411_Debug"
+TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/XiHu20260330"
+# TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/XiHu20260330_Debug"
 
 # 3. QoS 文件的绝对路径
 QOS_YAML_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/rosbag_play_qos_cfg.yaml"
@@ -50,7 +54,7 @@ GENERATE_KITTI_DATASET = False
 KITTI_OUTPUT_DIR = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_KITTI_Dataset/Debug"
 
 # Xtreme1 输出路径
-XTREME1_OUTPUT_DIR = "/home/keyaoli/Data/AutoAnnotation/DataRecord/BaoLi20260305/Xtreme1_Upload"
+XTREME1_OUTPUT_DIR = "/home/keyaoli/Data/AutoAnnotation/DataRecord/XiHu20260330/Xtreme1_Upload"
 
 SPLIT_RATIO = 0.8         # 80% 划入 train.txt, 20% 划入 val.txt
 CONVERT_PCD_TO_BIN = True # 是否自动将点云转为 OpenPCDet 必须的 bin 格式 (仅在 GENERATE_KITTI_DATASET=True 时有效)
@@ -58,7 +62,9 @@ RANDOM_SEED = 42
 
 # 是否在转换打包完成后，彻底删除 ROS2 install/share 目录下的原始生成数据
 CLEANUP_SHARE_DATA = False 
-RAW_DATA_ARCHIVE_DIR = "/home/keyaoli/Code/Wayrobo/3D_Detection_Annotation/install/automatic_annotation/share/automatic_annotation/data/history"
+RAW_DATA_ARCHIVE_DIR = "/home/keyaoli/Data/AutoAnnotation/Auto_Annotation_Origin"
+PRESERVE_FULL_RAW_COPY = True
+FULL_RAW_DATA_ARCHIVE_DIR = "/home/keyaoli/Data/AutoAnnotation/Auto_Annotation_Origin_Full"
 MAX_EMPTY_FRAME_RATIO = 0.1 # 0.1 表示空帧数量最多为有目标帧数量的 10%
 # ==========================================================
 
@@ -391,6 +397,27 @@ def build_datasets(workspace_path, location_str):
 
     # ================= 深度清理与归档逻辑 =================
     data_record_dirs = set(os.path.dirname(scene_dir) for scene_dir in scene_dirs)
+
+    if PRESERVE_FULL_RAW_COPY:
+        full_archive_folder_name = f"{dataset_folder_name}_origin_full"
+        full_archive_target_dir = os.path.join(FULL_RAW_DATA_ARCHIVE_DIR, full_archive_folder_name)
+        print(f"\n💾 正在备份完整原始生成数据...")
+
+        try:
+            os.makedirs(full_archive_target_dir, exist_ok=False)
+        except FileExistsError as e:
+            raise RuntimeError(f"完整原始数据备份目录已存在，请先处理后再重试: {full_archive_target_dir}") from e
+
+        for dr_dir in sorted(data_record_dirs):
+            backup_target_dir = os.path.join(full_archive_target_dir, os.path.basename(dr_dir))
+            try:
+                shutil.copytree(dr_dir, backup_target_dir, copy_function=shutil.copy2)
+                print(f"  [+] 已完整备份: {os.path.basename(dr_dir)}")
+            except Exception as e:
+                raise RuntimeError(f"完整原始数据备份失败，已中止后续裁剪与归档: {dr_dir} -> {e}") from e
+
+        print(f"✨ 完整原始数据已备份至 -> {full_archive_target_dir}")
+
     if CLEANUP_SHARE_DATA:
         print(f"\n🧹 [彻底模式] 正在清理 ROS 2 install/share 目录下的原始生成数据...")
         for dr_dir in data_record_dirs:
