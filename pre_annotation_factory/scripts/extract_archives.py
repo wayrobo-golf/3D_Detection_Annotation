@@ -14,13 +14,13 @@ from typing import Iterable
 SOURCE_DIR = Path(
     os.environ.get(
         "SOURCE_DIR",
-        "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/DongZhuang20260413/2026_4_13",
+        "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/YinXiu20260414/20260414",
     )
 )
 OUTPUT_DIR = Path(
     os.environ.get(
         "OUTPUT_DIR",
-        "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/DongZhuang20260413/2026_4_13/extracted",
+        "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/YinXiu20260414/20260414/extracted",
     )
 )
 

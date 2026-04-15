@@ -33,6 +33,7 @@ FINAL_KITTI_OUTPUT_DIR = Path("/home/keyaoli/Data/AutoAnnotation/Wayrobo_KITTI_D
 SPLIT_RATIO = 0.8         # 80% 训练集, 20% 验证集
 CONVERT_PCD_TO_BIN = True # 是否转换为 OpenPCDet 需要的 bin
 RANDOM_SEED = 42
+MAX_EMPTY_LABEL_RATIO = 0.10
 
 # ================= 核心数学与转换工具 =================
 R_xtreme2kitti = np.array([
@@ -188,6 +189,21 @@ def has_non_empty_label(label_path):
     with open(label_path, 'r', encoding='utf-8') as f:
         return any(line.strip() for line in f)
 
+
+def compute_max_empty_frames(positive_count, max_empty_ratio):
+    if positive_count < 0:
+        raise ValueError("positive_count must be non-negative")
+    if not 0.0 <= max_empty_ratio <= 1.0:
+        raise ValueError("MAX_EMPTY_LABEL_RATIO must be between 0.0 and 1.0")
+    if max_empty_ratio == 1.0:
+        return None
+    if positive_count == 0:
+        return 0
+    if max_empty_ratio == 0.0:
+        return 0
+
+    return int(math.floor((positive_count * max_empty_ratio) / (1.0 - max_empty_ratio)))
+
 # ================= 编译流水线 =================
 def build_final_dataset(location_str):
     print(f"\n{'='*50}")
@@ -206,7 +222,7 @@ def build_final_dataset(location_str):
     imagesets_dir.mkdir(parents=True, exist_ok=True)
 
     scene_dirs = sorted(RAW_ARCHIVE_ROOT.glob("data_record_*/Scene_*"))
-    tasks = []
+    scanned_tasks = []
 
     for scene_dir in scene_dirs:
         scene_name = scene_dir.name
@@ -230,34 +246,62 @@ def build_final_dataset(location_str):
                     label_source = "xtreme"
                     target_label_path = xtreme_json_path
                 else:
-                    label_source = "empty"
+                    label_source = "empty_missing_json"
                     target_label_path = None
             else:
-                label_source = "raw"
-                target_label_path = raw_label_path
-                if not target_label_path.exists():
-                    continue
+                label_source = "empty_missing_scene"
+                target_label_path = None
                 
-            tasks.append({
+            scanned_tasks.append({
                 "frame_id": frame_id,
+                "scene_name": scene_name,
                 "config_path": Path(config_path),
                 "img_path": Path(img_matches[0]),
                 "pcd_path": pcd_path,
                 "label_source": label_source,
                 "label_path": target_label_path,
-                "raw_label_path": raw_label_path
+                "raw_label_path": raw_label_path,
+                "kitti_lines": None
             })
 
-    if not tasks:
+    if not scanned_tasks:
         print("❌ 未发现任何有效帧数据，整合终止。")
         return
 
-    random.seed(RANDOM_SEED)
-    random.shuffle(tasks)
-    
+    positive_tasks, empty_tasks = [], []
+    for task in scanned_tasks:
+        if task["label_source"] == "xtreme":
+            kitti_lines = parse_xtreme_to_kitti_lines(task["label_path"], task["config_path"])
+            task["kitti_lines"] = kitti_lines
+            if kitti_lines:
+                positive_tasks.append(task)
+            else:
+                task["label_source"] = "empty_xtreme_json"
+                empty_tasks.append(task)
+        else:
+            task["kitti_lines"] = []
+            empty_tasks.append(task)
+
+    max_empty_frames = compute_max_empty_frames(len(positive_tasks), MAX_EMPTY_LABEL_RATIO)
+    if not positive_tasks and max_empty_frames == 0:
+        raise ValueError("Merge would produce zero positive frames; cannot enforce empty-label cap with zero positive frames.")
+
+    rng = random.Random(RANDOM_SEED)
+    if max_empty_frames is None or len(empty_tasks) <= max_empty_frames:
+        kept_empty_tasks = list(empty_tasks)
+    else:
+        kept_empty_tasks = rng.sample(empty_tasks, max_empty_frames)
+
+    dropped_empty_count = len(empty_tasks) - len(kept_empty_tasks)
+    tasks = positive_tasks + kept_empty_tasks
+    rng.shuffle(tasks)
+
     split_idx = int(len(tasks) * SPLIT_RATIO)
     train_ids, val_ids = [], []
-    xtreme_used_count, empty_used_count, raw_used_count = 0, 0, 0
+    xtreme_used_count = 0
+    empty_missing_scene_count = 0
+    empty_missing_json_count = 0
+    empty_xtreme_json_count = 0
 
     print(f"🔎 扫描完毕。共捕获 {len(tasks)} 帧有效数据，开始转换装配...")
 
@@ -271,19 +315,24 @@ def build_final_dataset(location_str):
         out_img = training_base / "image_2" / f"{frame_id}{img_ext}"
         
         if task["label_source"] == "xtreme":
-            kitti_lines = parse_xtreme_to_kitti_lines(task["label_path"], task["config_path"])
             with open(out_label, 'w') as f:
-                f.writelines(kitti_lines)
+                f.writelines(task["kitti_lines"])
             xtreme_used_count += 1
-        elif task["label_source"] == "empty":
+        elif task["label_source"] in {"empty_missing_json", "empty_missing_scene", "empty_xtreme_json"}:
             with open(out_label, 'w', encoding='utf-8'):
                 pass
-            empty_used_count += 1
-            if has_non_empty_label(task["raw_label_path"]):
-                print(f"ℹ️ 帧 {frame_id} 在 Xtreme 场景中缺失导出 json，已按人工判空覆盖原始非空标注。")
+            if task["label_source"] == "empty_missing_json":
+                empty_missing_json_count += 1
+                if has_non_empty_label(task["raw_label_path"]):
+                    print(f"ℹ️ 帧 {frame_id} 在 Xtreme 场景中缺失导出 json，已按人工判空覆盖原始非空标注。")
+            elif task["label_source"] == "empty_missing_scene":
+                empty_missing_scene_count += 1
+                if has_non_empty_label(task["raw_label_path"]):
+                    print(f"ℹ️ 帧 {frame_id} 所在 Scene 未出现在 Xtreme 导出中，已按空标签处理并覆盖原始非空标注。")
+            else:
+                empty_xtreme_json_count += 1
         else:
-            shutil.copy2(task["label_path"], out_label)
-            raw_used_count += 1
+            raise ValueError(f"未知的标签来源: {task['label_source']}")
             
         generate_calib(task["config_path"], out_calib)
         shutil.copy2(task["img_path"], out_img)
@@ -308,7 +357,13 @@ def build_final_dataset(location_str):
         except Exception as e:
             print(f"⚠️ NuScenes Metadata 生成跳过: {e}")
 
-    print(f"\n✅ 编译完成！共使用 Xtreme精修: {xtreme_used_count}帧, 人工判空: {empty_used_count}帧, 自动标注兜底: {raw_used_count}帧。")
+    print(
+        f"\n✅ 编译完成！共使用 Xtreme精修: {xtreme_used_count}帧, "
+        f"Scene 缺失判空: {empty_missing_scene_count}帧, "
+        f"缺失 json 判空: {empty_missing_json_count}帧, "
+        f"空 Xtreme 结果判空: {empty_xtreme_json_count}帧, "
+        f"丢弃空标签: {dropped_empty_count}帧。"
+    )
     print(f"📊 划分情况 -> 训练集: {len(train_ids)}帧，验证集: {len(val_ids)}帧。")
     
     print(f"📦 正在打包最终极训练数据集 (ZIP)...")

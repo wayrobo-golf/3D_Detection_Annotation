@@ -381,6 +381,9 @@ Behavior:
   - final output dir
   - location string
 - preserve the current "trust annotator" empty-frame rule already implemented.
+- treat a raw `Scene_*` that is missing from the Xtreme export root as an empty-label scene instead of falling back to raw labels.
+- enforce a final dataset-level empty-label cap of 10% by globally sampling from all empty-label frames with a fixed random seed before the train/val split.
+- fail fast if the merge result would contain zero positive frames, because the 10% cap would otherwise collapse the dataset to zero kept frames.
 
 Output:
 
