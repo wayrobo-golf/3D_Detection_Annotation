@@ -153,6 +153,33 @@ def find_archives(source_dir: Path, recursive: bool) -> list[Path]:
     return sorted(archives)
 
 
+def extract_archives(
+    source_dir: Path,
+    output_dir: Path,
+    recursive: bool = False,
+    overwrite: bool = False,
+    remove_archive: bool = False,
+) -> Path:
+    source_dir = Path(source_dir)
+    output_dir = Path(output_dir)
+
+    if not source_dir.is_dir():
+        raise FileNotFoundError(f"source_dir does not exist: {source_dir}")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    archives = find_archives(source_dir, recursive)
+
+    for archive in archives:
+        kind = archive_type(archive)
+        if kind == "unknown":
+            continue
+        extract_archive(archive, kind, output_dir, overwrite)
+        if remove_archive:
+            archive.unlink()
+
+    return output_dir
+
+
 def main() -> int:
     if not SOURCE_DIR.is_dir():
         log("ERROR", f"SOURCE_DIR 不存在: {SOURCE_DIR}")

@@ -126,6 +126,18 @@ output:
   final_dataset_dir: /data/final_delivery
 ```
 
+如需按 job 切换自动预标注依赖资源，增加：
+
+```yaml
+auto_annotation:
+  base_yaml_path: /home/keyaoli/Code/Wayrobo/3D_Detection_Annotation/automatic_annotation/config/default.yaml
+  overrides:
+    global_pc_map_addr: /path/to/colored_lidar_merged.pcd
+    pc_annotation_file_addr: /path/to/tracklet_labels.xml
+    default_tf_lcam_to_lidar: [0.07, 0.116, 0.071, -126.1, -1.0, -91.3]
+    default_tf_lidar_to_ins: [-0.347, 0.0, 1.277, -0.981, -0.378, -1.315]
+```
+
 ### 5.2 字段说明
 
 - `job_name`
@@ -144,6 +156,10 @@ output:
   在 Xtreme1 中创建的数据集名称。
 - `output.final_dataset_dir`
   最终交付 KITTI 数据集 ZIP 与解包目录的输出根目录。
+- `auto_annotation.base_yaml_path`
+  自动预标注模板 yaml 路径。
+- `auto_annotation.overrides`
+  写入 job 私有 runtime yaml 的关键覆写项，不直接改仓库中的 `default.yaml`。
 
 ### 5.3 任务工作目录
 
@@ -375,6 +391,13 @@ build_final_dataset(
 - 当前 ZIP 结构已经与现有业务兼容；
 - 减少重复实现；
 - 降低“上传包结构与当前 Xtreme 解析结构偏离”的风险。
+
+实现时需要和 Xtreme1 UI 的上传行为保持一致。对于当前本地联调版本，`/api/data/upload` 至少要携带：
+
+- `dataFormat = XTREME1`
+- `resultType = GROUND_TRUTH`
+
+否则 Xtreme1 会把 ZIP 当作原始数据导入，但不会把 `result/*.json` 作为预标注结果导入。
 
 ### 9.4 导出输出
 

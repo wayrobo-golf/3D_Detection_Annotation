@@ -17,6 +17,8 @@ import uuid
 import numpy as np
 from datetime import datetime
 from scipy.spatial.transform import Rotation as R
+from contextlib import contextmanager
+from pathlib import Path
 
 # ================= 配置区 =================
 # 1. 你的工程工作空间绝对路径
@@ -67,6 +69,23 @@ PRESERVE_FULL_RAW_COPY = True
 FULL_RAW_DATA_ARCHIVE_DIR = "/home/keyaoli/Data/AutoAnnotation/Auto_Annotation_Origin_Full"
 MAX_EMPTY_FRAME_RATIO = 0.1 # 0.1 表示空帧数量最多为有目标帧数量的 10%
 # ==========================================================
+
+
+def select_xtreme_upload_tasks(valid_tasks, empty_tasks, max_empty_frame_ratio, random_seed):
+    if valid_tasks:
+        max_empty_count = int(len(valid_tasks) * max_empty_frame_ratio)
+        random.seed(random_seed)
+        random.shuffle(empty_tasks)
+        kept_empty_tasks = empty_tasks[:max_empty_count]
+        discarded_empty_tasks = empty_tasks[max_empty_count:]
+    else:
+        kept_empty_tasks = list(empty_tasks)
+        discarded_empty_tasks = []
+
+    tasks = valid_tasks + kept_empty_tasks
+    random.seed(random_seed)
+    random.shuffle(tasks)
+    return kept_empty_tasks, discarded_empty_tasks, tasks
 
 def get_bags_to_process(path):
     """智能解析路径：支持单个 .db3 文件，或遍历目录下的所有 bag"""
@@ -264,6 +283,8 @@ def build_datasets(workspace_path, location_str):
     current_time_str = datetime.now().strftime("%Y%m%d%H%M%S")
     dataset_folder_name = f"3DBox_Annotation_{current_time_str}_{location_str}"
     xtreme1_folder_name = f"Xtreme1_Upload_{current_time_str}_{location_str}"
+    full_archive_target_dir = None
+    archive_target_dir = None
     
     # 1. 准备目标路径
     xtreme1_root_dir = os.path.join(XTREME1_OUTPUT_DIR, xtreme1_folder_name)
@@ -313,16 +334,13 @@ def build_datasets(workspace_path, location_str):
                 else:
                     valid_tasks.append(task_tuple)
 
-    max_empty_count = int(len(valid_tasks) * MAX_EMPTY_FRAME_RATIO)
-    random.seed(RANDOM_SEED)
-    random.shuffle(empty_tasks) 
-    
-    kept_empty_tasks = empty_tasks[:max_empty_count] 
-    discarded_empty_tasks = empty_tasks[max_empty_count:]
+    kept_empty_tasks, discarded_empty_tasks, tasks = select_xtreme_upload_tasks(
+        valid_tasks,
+        empty_tasks,
+        MAX_EMPTY_FRAME_RATIO,
+        RANDOM_SEED,
+    )
     discarded_empty_count = len(discarded_empty_tasks)
-
-    tasks = valid_tasks + kept_empty_tasks
-    random.shuffle(tasks)
 
     print(f"🔎 发现有目标帧: {len(valid_tasks)} 帧，原始空帧: {len(empty_tasks)} 帧。")
     print(f"⚖️ 保留 {len(kept_empty_tasks)} 个负样本，拟彻底销毁 {discarded_empty_count} 个多余空帧及其所有附属副产物。")
@@ -458,6 +476,78 @@ def build_datasets(workspace_path, location_str):
                 print(f"  ⚠️ 归档失败 {dr_dir}: {e}")
                 
         print(f"✨ 数据已安全归档至 -> {archive_target_dir}")
+
+    return {
+        "xtreme_upload_dir": Path(xtreme1_root_dir),
+        "xtreme_zip_path": Path(xtreme1_zip),
+        "raw_archive_dir": Path(archive_target_dir) if archive_target_dir else None,
+        "full_raw_archive_dir": Path(full_archive_target_dir) if full_archive_target_dir else None,
+    }
+
+
+def run_xtreme_upload_bundle(workspace_path, location_str):
+    global GENERATE_KITTI_DATASET
+
+    previous = GENERATE_KITTI_DATASET
+    GENERATE_KITTI_DATASET = False
+    try:
+        build_datasets(workspace_path, location_str)
+    finally:
+        GENERATE_KITTI_DATASET = previous
+
+
+@contextmanager
+def temporary_config(**overrides):
+    previous = {}
+    for key, value in overrides.items():
+        previous[key] = globals()[key]
+        globals()[key] = value
+    try:
+        yield
+    finally:
+        for key, value in previous.items():
+            globals()[key] = value
+
+
+def run_auto_annotation_job(
+    target_path,
+    location_str,
+    *,
+    workspace_path=WORKSPACE_PATH,
+    qos_yaml_path=QOS_YAML_PATH,
+    yaml_config_path=YAML_CONFIG_PATH,
+    xtreme1_output_dir=XTREME1_OUTPUT_DIR,
+    raw_data_archive_dir=RAW_DATA_ARCHIVE_DIR,
+    preserve_full_raw_copy=PRESERVE_FULL_RAW_COPY,
+    full_raw_data_archive_dir=FULL_RAW_DATA_ARCHIVE_DIR,
+    cleanup_share_data=CLEANUP_SHARE_DATA,
+    max_empty_frame_ratio=MAX_EMPTY_FRAME_RATIO,
+):
+    overrides = {
+        "WORKSPACE_PATH": str(workspace_path),
+        "QOS_YAML_PATH": str(qos_yaml_path),
+        "YAML_CONFIG_PATH": str(yaml_config_path),
+        "XTREME1_OUTPUT_DIR": str(xtreme1_output_dir),
+        "RAW_DATA_ARCHIVE_DIR": str(raw_data_archive_dir),
+        "PRESERVE_FULL_RAW_COPY": preserve_full_raw_copy,
+        "FULL_RAW_DATA_ARCHIVE_DIR": str(full_raw_data_archive_dir),
+        "CLEANUP_SHARE_DATA": cleanup_share_data,
+        "MAX_EMPTY_FRAME_RATIO": max_empty_frame_ratio,
+        "GENERATE_KITTI_DATASET": False,
+    }
+
+    with temporary_config(**overrides):
+        if not os.path.exists(target_path):
+            raise FileNotFoundError(f"找不到目标路径: {target_path}")
+
+        bag_list = get_bags_to_process(str(target_path))
+        if not bag_list:
+            raise ValueError(f"在 {target_path} 中没有找到任何有效的 ROS2 Bag！")
+
+        for index, bag in enumerate(bag_list, start=1):
+            process_bag(bag, index)
+
+        return build_datasets(str(workspace_path), location_str)
 
 
 if __name__ == "__main__":

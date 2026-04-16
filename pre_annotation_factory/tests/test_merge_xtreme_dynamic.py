@@ -140,6 +140,35 @@ def test_missing_xtreme_scene_is_treated_as_empty_label(tmp_path):
     assert label_files[0].read_text(encoding="utf-8") == ""
 
 
+def test_build_final_dataset_accepts_runtime_roots(tmp_path):
+    module = load_merge_module()
+
+    raw_root = tmp_path / "raw"
+    xtreme_root = tmp_path / "xtreme"
+    output_root = tmp_path / "output"
+    scene_dir = raw_root / "data_record_20260414" / "Scene_01"
+
+    create_raw_frame(scene_dir, "frame_001", "raw-label\n")
+    create_xtreme_result(xtreme_root, "Scene_01", "frame_001")
+
+    stub_external_effects(module, output_root)
+    module.MAX_EMPTY_LABEL_RATIO = 1.0
+    module.parse_xtreme_to_kitti_lines = lambda *_args, **_kwargs: [
+        "Car 0.00 0 0.00 0.00 0.00 10.00 10.00 1.00 1.00 1.00 0.00 0.00 10.00 0.00 0.00 0.00\n"
+    ]
+
+    module.build_final_dataset(
+        "unit_test",
+        xtreme_export_root=xtreme_root,
+        raw_archive_root=raw_root,
+        final_kitti_output_dir=output_root,
+        max_empty_label_ratio=1.0,
+    )
+
+    label_files = read_output_labels(output_root)
+    assert len(label_files) == 1
+
+
 def test_empty_labels_are_globally_sampled_to_ten_percent(tmp_path):
     module = load_merge_module()
 

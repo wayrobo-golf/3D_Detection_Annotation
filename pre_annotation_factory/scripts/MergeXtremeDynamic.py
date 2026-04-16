@@ -205,14 +205,33 @@ def compute_max_empty_frames(positive_count, max_empty_ratio):
     return int(math.floor((positive_count * max_empty_ratio) / (1.0 - max_empty_ratio)))
 
 # ================= 编译流水线 =================
-def build_final_dataset(location_str):
+def build_final_dataset(
+    location_str,
+    xtreme_export_root=None,
+    raw_archive_root=None,
+    final_kitti_output_dir=None,
+    split_ratio=None,
+    convert_pcd_to_bin=None,
+    random_seed=None,
+    max_empty_label_ratio=None,
+):
     print(f"\n{'='*50}")
     print("🚀 开始终极编译：融合 Xtreme1 人工精修与原始数据...")
     print(f"{'='*50}")
 
+    xtreme_export_root = Path(xtreme_export_root or XTREME_EXPORT_ROOT)
+    raw_archive_root = Path(raw_archive_root or RAW_ARCHIVE_ROOT)
+    final_kitti_output_dir = Path(final_kitti_output_dir or FINAL_KITTI_OUTPUT_DIR)
+    split_ratio = SPLIT_RATIO if split_ratio is None else split_ratio
+    convert_pcd_to_bin = CONVERT_PCD_TO_BIN if convert_pcd_to_bin is None else convert_pcd_to_bin
+    random_seed = RANDOM_SEED if random_seed is None else random_seed
+    max_empty_label_ratio = (
+        MAX_EMPTY_LABEL_RATIO if max_empty_label_ratio is None else max_empty_label_ratio
+    )
+
     current_time_str = datetime.now().strftime("%Y%m%d%H%M%S")
     dataset_folder_name = f"3DBox_Annotation_Final_{current_time_str}_{location_str}"
-    dataset_root_dir = FINAL_KITTI_OUTPUT_DIR / dataset_folder_name
+    dataset_root_dir = final_kitti_output_dir / dataset_folder_name
     
     training_base = dataset_root_dir / "training"
     imagesets_dir = dataset_root_dir / "ImageSets"
@@ -221,12 +240,12 @@ def build_final_dataset(location_str):
         (training_base / fol).mkdir(parents=True, exist_ok=True)
     imagesets_dir.mkdir(parents=True, exist_ok=True)
 
-    scene_dirs = sorted(RAW_ARCHIVE_ROOT.glob("data_record_*/Scene_*"))
+    scene_dirs = sorted(raw_archive_root.glob("data_record_*/Scene_*"))
     scanned_tasks = []
 
     for scene_dir in scene_dirs:
         scene_name = scene_dir.name
-        xtreme_scene_dir = XTREME_EXPORT_ROOT / scene_name
+        xtreme_scene_dir = xtreme_export_root / scene_name
         has_xtreme_export = xtreme_scene_dir.exists()
         
         config_files = glob.glob(str(scene_dir / "camera_config" / "*.json"))
@@ -282,11 +301,11 @@ def build_final_dataset(location_str):
             task["kitti_lines"] = []
             empty_tasks.append(task)
 
-    max_empty_frames = compute_max_empty_frames(len(positive_tasks), MAX_EMPTY_LABEL_RATIO)
+    max_empty_frames = compute_max_empty_frames(len(positive_tasks), max_empty_label_ratio)
     if not positive_tasks and max_empty_frames == 0:
         raise ValueError("Merge would produce zero positive frames; cannot enforce empty-label cap with zero positive frames.")
 
-    rng = random.Random(RANDOM_SEED)
+    rng = random.Random(random_seed)
     if max_empty_frames is None or len(empty_tasks) <= max_empty_frames:
         kept_empty_tasks = list(empty_tasks)
     else:
@@ -337,12 +356,12 @@ def build_final_dataset(location_str):
         generate_calib(task["config_path"], out_calib)
         shutil.copy2(task["img_path"], out_img)
         
-        if CONVERT_PCD_TO_BIN:
+        if convert_pcd_to_bin:
             pcd_to_bin_fixed(task["pcd_path"], out_bin)
         else:
             shutil.copy2(task["pcd_path"], training_base / "velodyne" / f"{frame_id}.pcd")
 
-        if i < split_idx: train_ids.append(frame_id)
+        if i < int(len(tasks) * split_ratio): train_ids.append(frame_id)
         else: val_ids.append(frame_id)
 
         if (i + 1) % 50 == 0:
@@ -370,10 +389,15 @@ def build_final_dataset(location_str):
     zip_path = shutil.make_archive(
         base_name=str(dataset_root_dir), 
         format='zip',
-        root_dir=FINAL_KITTI_OUTPUT_DIR,  
+        root_dir=final_kitti_output_dir,  
         base_dir=dataset_folder_name
     )
     print(f"🎉 终极交付准备就绪！数据集已打包至 -> {zip_path}")
+
+    return {
+        "dataset_root_dir": dataset_root_dir,
+        "zip_path": Path(zip_path),
+    }
 
 
 if __name__ == "__main__":
