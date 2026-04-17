@@ -152,3 +152,34 @@ status=completed
 - `artifacts/xtreme_export/normalized/Scene_XX/data/*.json` 是否存在
 - `state.json` 中的 `last_error`
 
+## 8. 多任务 manifest 管理建议
+
+建议每一组数据使用一份新的 `job.yaml`，不要直接修改上一组已经提交过的 manifest 反复复用。
+
+原因：
+
+- 一个 `job.yaml` 对应一组独立输入、一套配置和一份独立产物
+- `submit` 后原始 manifest 会被复制到 `jobs/<job_id>/job.yaml`
+- 后续追溯某个 job 当时使用的 bag、地图、XML、外参时，会更清晰
+
+推荐做法：
+
+- 为每组数据单独保存一个 manifest 文件
+- 复用上一份作为模板，只修改会随任务变化的字段
+
+通常需要修改：
+
+- `job_name`
+- `location`
+- `input.source_dir`
+- `workspace.root_dir`
+- `xtreme.dataset_name`
+- 如果场景不同，再修改 `auto_annotation.overrides`
+
+推荐命名方式例如：
+
+- `jobs/baoli_20260305_debug.yaml`
+- `jobs/yenan_20260318.yaml`
+- `jobs/xihu_20260330_debug.yaml`
+
+如果只是同一批数据重复试跑，也建议新建 manifest 或至少修改 `xtreme.dataset_name` 和 `workspace.root_dir`，避免和历史 job 混淆。

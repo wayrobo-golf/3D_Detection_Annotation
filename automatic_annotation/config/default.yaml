@@ -27,8 +27,8 @@ automatic_annotation_node:
     generate_nusc_label: false
     generate_xtreme1_json: true
     enable_visual_verify: true
-    global_pc_map_addr: "/home/keyaoli/Data/AutoAnnotation/MapAnnotation/yx_20260327/velodyne_points/data/colored_lidar_merged.pcd"
-    pc_annotation_file_addr: "/home/keyaoli/Data/AutoAnnotation/MapAnnotation/yx_20260327/tracklet_labels.xml"
+    global_pc_map_addr: "/home/keyaoli/Data/AutoAnnotation/MapAnnotation/bl_20260317/velodyne_points/data/colored_lidar_merged.pcd"
+    pc_annotation_file_addr: "/home/keyaoli/Data/AutoAnnotation/MapAnnotation/bl_20260317/tracklet_labels.xml"
 
     custom_record_folder_name: ""   # 为了自动化脚本可以传入scene标识
 
