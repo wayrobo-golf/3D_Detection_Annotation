@@ -13,6 +13,7 @@ class InputConfig:
     source_dir: Path
     recursive: bool = False
     overwrite_extract: bool = False
+    qos_yaml_path: Path | None = None
 
 
 @dataclass
@@ -81,6 +82,11 @@ def load_job_manifest(path: Path) -> JobManifest:
             source_dir=Path(payload["input"]["source_dir"]),
             recursive=payload["input"].get("recursive", False),
             overwrite_extract=payload["input"].get("overwrite_extract", False),
+            qos_yaml_path=(
+                Path(payload["input"]["qos_yaml_path"])
+                if payload["input"].get("qos_yaml_path") is not None
+                else None
+            ),
         ),
         workspace=WorkspaceConfig(root_dir=Path(payload["workspace"]["root_dir"])),
         auto_annotation=(

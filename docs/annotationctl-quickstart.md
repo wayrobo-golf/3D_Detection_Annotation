@@ -35,6 +35,7 @@ input:
   source_dir: /home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/BaoLi20260305_Debug
   recursive: false
   overwrite_extract: false
+  qos_yaml_path: /home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/rosbag_play_qos_cfg.yaml
 
 workspace:
   root_dir: /tmp/annotationctl_baoli_debug_resubmit
@@ -64,6 +65,7 @@ output:
 - `input.source_dir`：输入数据目录，可以放原始 rosbag 目录，也可以放待解压的压缩包目录。
 - `input.recursive`：是否递归扫描 `source_dir` 的子目录查找压缩包；`false` 只扫描顶层，`true` 会继续扫描下级目录。
 - `input.overwrite_extract`：解压时如果目标位置已有同名内容，是否先删除旧内容再重新解压；`false` 不主动覆盖，`true` 会清理后重解。
+- `input.qos_yaml_path`：可选的 rosbag 播放 QoS override 文件路径；如果配置且文件存在，`ros2 bag play` 会带上 `--qos-profile-overrides-path`。
 - `workspace.root_dir`：annotationctl 工作目录，`jobs/<job_id>/`、中间产物、状态文件都会写到这里。
 - `auto_annotation.base_yaml_path` 是模板 yaml
 - `auto_annotation.overrides` 会生成到 job 私有 runtime yaml，而不会改仓库里的 `default.yaml`

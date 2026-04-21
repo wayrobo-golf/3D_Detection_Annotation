@@ -200,6 +200,8 @@ class WorkflowPipeline:
                 "preserve_full_raw_copy": False,
                 "cleanup_share_data": False,
             }
+            if manifest.input.qos_yaml_path is not None:
+                runner_kwargs["qos_yaml_path"] = manifest.input.qos_yaml_path
             if runtime_auto_annotation_yaml is not None:
                 runner_kwargs["yaml_config_path"] = runtime_auto_annotation_yaml
 

@@ -134,9 +134,10 @@ def process_bag(bag_path, scene_index):
         "--clock"
     ]
     
-    if os.path.exists(QOS_YAML_PATH):
-        print(f"⚙️ 加载 QoS 配置文件: {QOS_YAML_PATH}")
-        bag_cmd.extend(["--qos-profile-overrides-path", QOS_YAML_PATH])
+    qos_yaml_path = str(QOS_YAML_PATH) if QOS_YAML_PATH is not None else None
+    if qos_yaml_path and os.path.exists(qos_yaml_path):
+        print(f"⚙️ 加载 QoS 配置文件: {qos_yaml_path}")
+        bag_cmd.extend(["--qos-profile-overrides-path", qos_yaml_path])
     
     print(f"▶️ 开始播放 Bag...")
     subprocess.run(bag_cmd) 
@@ -525,7 +526,7 @@ def run_auto_annotation_job(
 ):
     overrides = {
         "WORKSPACE_PATH": str(workspace_path),
-        "QOS_YAML_PATH": str(qos_yaml_path),
+        "QOS_YAML_PATH": str(qos_yaml_path) if qos_yaml_path is not None else None,
         "YAML_CONFIG_PATH": str(yaml_config_path),
         "XTREME1_OUTPUT_DIR": str(xtreme1_output_dir),
         "RAW_DATA_ARCHIVE_DIR": str(raw_data_archive_dir),

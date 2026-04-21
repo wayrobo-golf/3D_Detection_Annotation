@@ -476,6 +476,128 @@ def test_submit_generates_job_specific_auto_annotation_yaml(tmp_path: Path, monk
     assert Path(state.paths["auto_annotation_yaml_path"]).exists()
 
 
+def test_load_job_manifest_parses_optional_input_qos_yaml_path(tmp_path: Path):
+    manifest_path = tmp_path / "job.yaml"
+    qos_yaml_path = tmp_path / "rosbag_qos.yaml"
+    manifest_path.write_text(
+        "\n".join(
+            [
+                "job_name: demo_job",
+                "location: Demo_20260416",
+                "input:",
+                f"  source_dir: {tmp_path / 'source'}",
+                f"  qos_yaml_path: {qos_yaml_path}",
+                "workspace:",
+                f"  root_dir: {tmp_path / 'workspace'}",
+                "xtreme:",
+                "  base_url: http://127.0.0.1:8190",
+                "  token_env: XTREME1_TOKEN",
+                "  dataset_name: DemoDataset",
+                "  dataset_type: lidar_fusion",
+                "output:",
+                f"  final_dataset_dir: {tmp_path / 'final'}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    manifest = load_job_manifest(manifest_path)
+
+    assert manifest.input.qos_yaml_path == qos_yaml_path
+
+
+def test_submit_passes_manifest_qos_yaml_path_to_auto_annotation_runner(
+    tmp_path: Path, monkeypatch
+):
+    from my_package.workflow.pipeline import WorkflowPipeline
+
+    manifest_path = tmp_path / "job.yaml"
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    qos_yaml_path = tmp_path / "rosbag_qos.yaml"
+    qos_yaml_path.write_text("topics: {}\n", encoding="utf-8")
+    manifest_path.write_text(
+        "\n".join(
+            [
+                "job_name: demo_job",
+                "location: Demo_20260416",
+                "input:",
+                f"  source_dir: {source_dir}",
+                f"  qos_yaml_path: {qos_yaml_path}",
+                "workspace:",
+                f"  root_dir: {tmp_path / 'workspace'}",
+                "xtreme:",
+                "  base_url: http://127.0.0.1:8190",
+                "  token_env: XTREME1_TOKEN",
+                "  dataset_name: DemoDataset",
+                "  dataset_type: lidar_fusion",
+                "output:",
+                f"  final_dataset_dir: {tmp_path / 'final'}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    manifest = load_job_manifest(manifest_path)
+    monkeypatch.setenv("XTREME1_TOKEN", "token")
+    calls = []
+
+    class FakeGateway:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def create_or_get_dataset(self, *_args, **_kwargs):
+            return "dataset-001"
+
+        def request_upload_url(self, *_args, **_kwargs):
+            return ("http://upload.local/file", "http://access.local/file")
+
+        def upload_archive(self, *_args, **_kwargs):
+            return None
+
+        def import_archive(self, *_args, **_kwargs):
+            return "import-001"
+
+        def wait_import_done(self, *_args, **_kwargs):
+            return None
+
+    def fake_extract(_source, target, **_kwargs):
+        target.mkdir(parents=True, exist_ok=True)
+        return target
+
+    def fake_run_auto_annotation(target_path, location_str, **kwargs):
+        calls.append(
+            (
+                Path(target_path),
+                location_str,
+                Path(kwargs["qos_yaml_path"]),
+            )
+        )
+        xtreme_zip = kwargs["xtreme1_output_dir"] / "upload.zip"
+        xtreme_zip.parent.mkdir(parents=True, exist_ok=True)
+        xtreme_zip.write_bytes(b"zip")
+        raw_origin_dir = kwargs["raw_data_archive_dir"] / "origin"
+        raw_origin_dir.mkdir(parents=True, exist_ok=True)
+        return {
+            "xtreme_zip_path": xtreme_zip,
+            "raw_archive_dir": raw_origin_dir,
+            "xtreme_upload_dir": kwargs["xtreme1_output_dir"],
+        }
+
+    pipeline = WorkflowPipeline.for_tests(
+        tmp_path / "workspace",
+        gateway_factory=FakeGateway,
+        extract_archives_fn=fake_extract,
+        get_bags_to_process_fn=lambda path: [path] if Path(path) == source_dir else [],
+        auto_annotation_runner=fake_run_auto_annotation,
+    )
+
+    pipeline.submit(manifest)
+
+    assert calls == [(source_dir, "Demo_20260416", qos_yaml_path)]
+
+
 def test_submit_records_failed_state_when_xtreme_request_fails(tmp_path: Path, monkeypatch):
     from my_package.workflow.pipeline import WorkflowPipeline
 
