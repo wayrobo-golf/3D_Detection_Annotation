@@ -14,6 +14,7 @@
 - 已完成 `3D_Detection_Annotation` 工作区编译
 - 服务器或本机可访问 Xtreme1
 - 预标注所需地图、XML、外参配置已准备完成
+- 新机器环境初始化可参考 `docs/nusc_env_setup.md`
 - 在仓库根目录准备 `.env`，写入 Xtreme Token：
 
 ```dotenv
