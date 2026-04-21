@@ -1,4 +1,6 @@
 from pathlib import Path
+import io
+import urllib.error
 
 import pytest
 
@@ -18,6 +20,154 @@ def test_gateway_raises_when_token_missing(monkeypatch):
 
     with pytest.raises(ValueError, match="XTREME1_TOKEN"):
         XtremeGateway("http://127.0.0.1:8190", "XTREME1_TOKEN")
+
+
+def test_request_json_retries_transient_502(monkeypatch):
+    monkeypatch.setenv("XTREME1_TOKEN", "secret-token")
+    gateway = XtremeGateway("http://127.0.0.1:8190", "XTREME1_TOKEN")
+
+    class FakeResponse:
+        def __init__(self, body: str):
+            self._body = body.encode("utf-8")
+
+        def read(self):
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    responses = [
+        urllib.error.HTTPError(
+            "http://127.0.0.1:8190/api/dataset/findByPage?pageNo=1&pageSize=100",
+            502,
+            "Bad Gateway",
+            hdrs=None,
+            fp=io.BytesIO(b"temporary gateway failure"),
+        ),
+        FakeResponse('{"code":"OK","data":{"list":[]}}'),
+    ]
+
+    def fake_urlopen(_request):
+        result = responses.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    response = gateway._request_json(
+        "GET",
+        gateway.DATASET_FIND_PATH,
+        params={"name": "DemoDataset", "pageNo": 1, "pageSize": 100},
+    )
+
+    assert response == {"code": "OK", "data": {"list": []}}
+
+
+def test_request_json_logs_attempt_and_retry(monkeypatch, capsys):
+    monkeypatch.setenv("XTREME1_TOKEN", "secret-token")
+    gateway = XtremeGateway("http://127.0.0.1:8190", "XTREME1_TOKEN")
+
+    class FakeResponse:
+        def __init__(self, body: str):
+            self._body = body.encode("utf-8")
+
+        def read(self):
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    responses = [
+        urllib.error.HTTPError(
+            "http://127.0.0.1:8190/api/dataset/findByPage?pageNo=1&pageSize=100",
+            502,
+            "Bad Gateway",
+            hdrs=None,
+            fp=io.BytesIO(b"temporary gateway failure"),
+        ),
+        FakeResponse('{"code":"OK","data":{"list":[]}}'),
+    ]
+
+    def fake_urlopen(_request):
+        result = responses.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    gateway._request_json(
+        "GET",
+        gateway.DATASET_FIND_PATH,
+        params={"name": "DemoDataset", "pageNo": 1, "pageSize": 100},
+    )
+
+    output = capsys.readouterr().out
+    assert "XtremeGateway" in output
+    assert "attempt 1/3" in output
+    assert "retrying after HTTP 502" in output
+    assert "/api/dataset/findByPage" in output
+
+
+def test_request_json_keeps_api_prefix_for_nginx_base_url(monkeypatch):
+    monkeypatch.setenv("XTREME1_TOKEN", "secret-token")
+    gateway = XtremeGateway("http://127.0.0.1:8190", "XTREME1_TOKEN")
+
+    captured = {}
+
+    class FakeResponse:
+        def read(self):
+            return b'{"code":"OK","data":{"list":[]}}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def fake_urlopen(request):
+        captured["url"] = request.full_url
+        return FakeResponse()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    gateway._request_json("GET", gateway.DATASET_FIND_PATH, params={"pageNo": 1})
+
+    assert captured["url"] == "http://127.0.0.1:8190/api/dataset/findByPage?pageNo=1"
+
+
+def test_request_json_strips_api_prefix_for_backend_base_url(monkeypatch):
+    monkeypatch.setenv("XTREME1_TOKEN", "secret-token")
+    gateway = XtremeGateway("http://127.0.0.1:8290", "XTREME1_TOKEN")
+
+    captured = {}
+
+    class FakeResponse:
+        def read(self):
+            return b'{"code":"OK","data":{"list":[]}}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def fake_urlopen(request):
+        captured["url"] = request.full_url
+        return FakeResponse()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    gateway._request_json("GET", gateway.DATASET_FIND_PATH, params={"pageNo": 1})
+
+    assert captured["url"] == "http://127.0.0.1:8290/dataset/findByPage?pageNo=1"
 
 
 def test_normalize_export_tree_flattens_single_outer_directory(tmp_path: Path):

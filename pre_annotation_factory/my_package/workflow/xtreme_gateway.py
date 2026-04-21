@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -18,6 +19,9 @@ class XtremeGateway:
     EXPORT_CREATE_PATH = "/api/data/export"
     EXPORT_STATUS_PATH = "/api/data/findExportRecordBySerialNumbers"
     ANNOTATION_LIST_PATH = "/api/annotate/data/listByDataIds"
+    TRANSIENT_STATUS_CODES = {502, 503, 504}
+    REQUEST_RETRY_ATTEMPTS = 3
+    REQUEST_RETRY_DELAY_SECONDS = 1.0
 
     def __init__(self, base_url: str, token_env: str):
         token = os.environ.get(token_env)
@@ -31,7 +35,8 @@ class XtremeGateway:
         }
 
     def _request_json(self, method: str, path: str, payload=None, params=None):
-        url = f"{self.base_url}{path}"
+        normalized_path = self._normalize_request_path(path)
+        url = f"{self.base_url}{normalized_path}"
         if params:
             url = f"{url}?{urllib.parse.urlencode(params)}"
 
@@ -43,8 +48,47 @@ class XtremeGateway:
         for key, value in self.headers.items():
             request.add_header(key, value)
 
-        with urllib.request.urlopen(request) as response:
-            return json.loads(response.read().decode("utf-8"))
+        last_error = None
+        for attempt in range(1, self.REQUEST_RETRY_ATTEMPTS + 1):
+            self._log_request_event(f"attempt {attempt}/{self.REQUEST_RETRY_ATTEMPTS}: {method} {url}")
+            try:
+                with urllib.request.urlopen(request) as response:
+                    return json.loads(response.read().decode("utf-8"))
+            except urllib.error.HTTPError as exc:
+                if exc.code in self.TRANSIENT_STATUS_CODES and attempt < self.REQUEST_RETRY_ATTEMPTS:
+                    self._log_request_event(
+                        f"retrying after HTTP {exc.code}: {method} {url}"
+                    )
+                    time.sleep(self.REQUEST_RETRY_DELAY_SECONDS)
+                    continue
+                body = _safe_read_error_body(exc)
+                raise RuntimeError(
+                    f"Xtreme request failed: {method} {url} -> HTTP {exc.code} {exc.reason}; "
+                    f"response_body={body or '<empty>'}"
+                ) from exc
+            except urllib.error.URLError as exc:
+                last_error = exc
+                if attempt < self.REQUEST_RETRY_ATTEMPTS:
+                    self._log_request_event(
+                        f"retrying after URLError {exc.reason}: {method} {url}"
+                    )
+                    time.sleep(self.REQUEST_RETRY_DELAY_SECONDS)
+                    continue
+                raise RuntimeError(
+                    f"Xtreme request failed: {method} {url} -> {exc.reason}"
+                ) from exc
+
+        raise RuntimeError(f"Xtreme request failed: {method} {url} -> {last_error}")
+
+    def _log_request_event(self, message: str) -> None:
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[XtremeGateway] {timestamp} {message}")
+
+    def _normalize_request_path(self, path: str) -> str:
+        parsed = urllib.parse.urlparse(self.base_url)
+        if parsed.port in {8080, 8290} and path.startswith("/api/"):
+            return path[len("/api") :]
+        return path
 
     def create_or_get_dataset(self, name: str, dataset_type: str) -> str:
         response = self._request_json(
@@ -176,6 +220,15 @@ class XtremeGateway:
         with urllib.request.urlopen(download_url) as response:
             archive_path.write_bytes(response.read())
         return archive_path
+
+
+def _safe_read_error_body(exc: urllib.error.HTTPError) -> str:
+    if exc.fp is None:
+        return ""
+    try:
+        return exc.read().decode("utf-8", errors="replace").strip()
+    except Exception:
+        return ""
 
 
 def normalize_export_tree(download_root: Path, target_root: Path) -> Path:

@@ -40,6 +40,30 @@ def load_annotationctl_module():
     return module
 
 
+def test_annotationctl_loads_dotenv_from_repo_root(tmp_path: Path, monkeypatch):
+    module = load_annotationctl_module()
+    env_path = tmp_path / ".env"
+    env_path.write_text("XTREME1_TOKEN=dotenv-token\n", encoding="utf-8")
+
+    monkeypatch.delenv("XTREME1_TOKEN", raising=False)
+
+    module.load_dotenv_file(env_path)
+
+    assert os.environ["XTREME1_TOKEN"] == "dotenv-token"
+
+
+def test_annotationctl_dotenv_does_not_override_existing_env(tmp_path: Path, monkeypatch):
+    module = load_annotationctl_module()
+    env_path = tmp_path / ".env"
+    env_path.write_text("XTREME1_TOKEN=dotenv-token\n", encoding="utf-8")
+
+    monkeypatch.setenv("XTREME1_TOKEN", "shell-token")
+
+    module.load_dotenv_file(env_path)
+
+    assert os.environ["XTREME1_TOKEN"] == "shell-token"
+
+
 def test_extract_archives_returns_output_dir_when_no_archives(tmp_path: Path):
     from scripts.extract_archives import extract_archives
 
@@ -452,6 +476,228 @@ def test_submit_generates_job_specific_auto_annotation_yaml(tmp_path: Path, monk
     assert Path(state.paths["auto_annotation_yaml_path"]).exists()
 
 
+def test_submit_records_failed_state_when_xtreme_request_fails(tmp_path: Path, monkeypatch):
+    from my_package.workflow.pipeline import WorkflowPipeline
+
+    manifest_path = tmp_path / "job.yaml"
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    manifest_path.write_text(
+        "\n".join(
+            [
+                "job_name: demo_job",
+                "location: Demo_20260416",
+                "input:",
+                f"  source_dir: {source_dir}",
+                "workspace:",
+                f"  root_dir: {tmp_path / 'workspace'}",
+                "xtreme:",
+                "  base_url: http://127.0.0.1:8190",
+                "  token_env: XTREME1_TOKEN",
+                "  dataset_name: DemoDataset",
+                "  dataset_type: lidar_fusion",
+                "output:",
+                f"  final_dataset_dir: {tmp_path / 'final'}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    manifest = load_job_manifest(manifest_path)
+    monkeypatch.setenv("XTREME1_TOKEN", "token")
+
+    class FakeGateway:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def create_or_get_dataset(self, *_args, **_kwargs):
+            raise RuntimeError("xtreme request failed hard")
+
+    def fake_extract(_source, target, **_kwargs):
+        target.mkdir(parents=True, exist_ok=True)
+        return target
+
+    def fake_run_auto_annotation(_target_path, _location_str, **kwargs):
+        xtreme_zip = kwargs["xtreme1_output_dir"] / "upload.zip"
+        xtreme_zip.parent.mkdir(parents=True, exist_ok=True)
+        xtreme_zip.write_bytes(b"zip")
+        raw_origin_dir = kwargs["raw_data_archive_dir"] / "origin"
+        raw_origin_dir.mkdir(parents=True, exist_ok=True)
+        return {
+            "xtreme_zip_path": xtreme_zip,
+            "raw_archive_dir": raw_origin_dir,
+            "xtreme_upload_dir": kwargs["xtreme1_output_dir"],
+        }
+
+    pipeline = WorkflowPipeline.for_tests(
+        tmp_path / "workspace",
+        gateway_factory=FakeGateway,
+        extract_archives_fn=fake_extract,
+        get_bags_to_process_fn=lambda path: [path] if Path(path) == source_dir else [],
+        auto_annotation_runner=fake_run_auto_annotation,
+    )
+
+    with pytest.raises(RuntimeError, match="xtreme request failed hard"):
+        pipeline.submit(manifest)
+
+    job_dirs = sorted((tmp_path / "workspace" / "jobs").iterdir())
+    assert len(job_dirs) == 1
+    state = JobStore(tmp_path / "workspace").load_state(job_dirs[0].name)
+    assert state.status == "failed"
+    assert state.current_step == "uploading_xtreme"
+    assert state.last_error == "xtreme request failed hard"
+    assert "xtreme_zip_path" in state.paths
+
+
+def test_upload_xtreme_uses_existing_zip_and_marks_waiting(tmp_path: Path, monkeypatch):
+    from my_package.workflow.pipeline import WorkflowPipeline
+
+    monkeypatch.setenv("XTREME1_TOKEN", "token")
+
+    class FakeGateway:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def create_or_get_dataset(self, *_args, **_kwargs):
+            return "dataset-001"
+
+        def request_upload_url(self, *_args, **_kwargs):
+            return ("http://upload.local/file", "http://access.local/file")
+
+        def upload_archive(self, *_args, **_kwargs):
+            return None
+
+        def import_archive(self, *_args, **_kwargs):
+            return "import-001"
+
+        def wait_import_done(self, *_args, **_kwargs):
+            return None
+
+    pipeline = WorkflowPipeline.for_tests(
+        tmp_path / "workspace",
+        gateway_factory=FakeGateway,
+    )
+    job_id = pipeline.seed_waiting_job("job-123")
+    job_dir = pipeline.job_store.jobs_root / job_id
+    (job_dir / "job.yaml").write_text(
+        "\n".join(
+            [
+                "job_name: demo_job",
+                "location: Demo_20260416",
+                "input:",
+                f"  source_dir: {tmp_path / 'source'}",
+                "workspace:",
+                f"  root_dir: {tmp_path / 'workspace'}",
+                "xtreme:",
+                "  base_url: http://127.0.0.1:8290",
+                "  token_env: XTREME1_TOKEN",
+                "  dataset_name: DemoDataset",
+                "  dataset_type: lidar_fusion",
+                "output:",
+                f"  final_dataset_dir: {tmp_path / 'final'}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    xtreme_zip = job_dir / "artifacts" / "xtreme_upload" / "upload.zip"
+    xtreme_zip.parent.mkdir(parents=True, exist_ok=True)
+    xtreme_zip.write_bytes(b"zip")
+    raw_origin_dir = job_dir / "artifacts" / "raw_origin" / "origin"
+    raw_origin_dir.mkdir(parents=True, exist_ok=True)
+    state = pipeline.job_store.load_state(job_id)
+    state.status = "failed"
+    state.current_step = "uploading_xtreme"
+    state.last_error = "temporary gateway failure"
+    state.paths["xtreme_zip_path"] = str(xtreme_zip)
+    state.paths["xtreme_upload_dir"] = str(xtreme_zip.parent)
+    state.paths["raw_archive_dir"] = str(raw_origin_dir)
+    pipeline.job_store.save_state(job_id, state)
+
+    pipeline.upload_xtreme(job_id)
+
+    state = pipeline.job_store.load_state(job_id)
+    assert state.status == "waiting_human_annotation"
+    assert state.current_step == "waiting_human_annotation"
+    assert state.last_error is None
+    assert state.xtreme["dataset_id"] == "dataset-001"
+    assert state.xtreme["import_task_serial"] == "import-001"
+
+
+def test_upload_xtreme_uses_workspace_manifest_when_job_manifest_missing(tmp_path: Path, monkeypatch):
+    from my_package.workflow.pipeline import WorkflowPipeline
+
+    monkeypatch.setenv("XTREME1_TOKEN", "token")
+
+    class FakeGateway:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def create_or_get_dataset(self, *_args, **_kwargs):
+            return "dataset-001"
+
+        def request_upload_url(self, *_args, **_kwargs):
+            return ("http://upload.local/file", "http://access.local/file")
+
+        def upload_archive(self, *_args, **_kwargs):
+            return None
+
+        def import_archive(self, *_args, **_kwargs):
+            return "import-001"
+
+        def wait_import_done(self, *_args, **_kwargs):
+            return None
+
+    pipeline = WorkflowPipeline.for_tests(
+        tmp_path / "workspace",
+        gateway_factory=FakeGateway,
+    )
+    job_id = pipeline.seed_waiting_job("job-legacy")
+    workspace_manifest = tmp_path / "workspace" / "job.yaml"
+    workspace_manifest.parent.mkdir(parents=True, exist_ok=True)
+    workspace_manifest.write_text(
+        "\n".join(
+            [
+                "job_name: demo_job",
+                "location: Demo_20260416",
+                "input:",
+                f"  source_dir: {tmp_path / 'source'}",
+                "workspace:",
+                f"  root_dir: {tmp_path / 'workspace'}",
+                "xtreme:",
+                "  base_url: http://127.0.0.1:8290",
+                "  token_env: XTREME1_TOKEN",
+                "  dataset_name: DemoDataset",
+                "  dataset_type: lidar_fusion",
+                "output:",
+                f"  final_dataset_dir: {tmp_path / 'final'}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    job_dir = pipeline.job_store.jobs_root / job_id
+    xtreme_zip = job_dir / "artifacts" / "xtreme_upload" / "upload.zip"
+    xtreme_zip.parent.mkdir(parents=True, exist_ok=True)
+    xtreme_zip.write_bytes(b"zip")
+    raw_origin_dir = job_dir / "artifacts" / "raw_origin" / "origin"
+    raw_origin_dir.mkdir(parents=True, exist_ok=True)
+    state = pipeline.job_store.load_state(job_id)
+    state.status = "failed"
+    state.current_step = "uploading_xtreme"
+    state.last_error = "temporary gateway failure"
+    state.paths["xtreme_zip_path"] = str(xtreme_zip)
+    state.paths["xtreme_upload_dir"] = str(xtreme_zip.parent)
+    state.paths["raw_archive_dir"] = str(raw_origin_dir)
+    pipeline.job_store.save_state(job_id, state)
+
+    pipeline.upload_xtreme(job_id)
+
+    assert (job_dir / "job.yaml").exists()
+    state = pipeline.job_store.load_state(job_id)
+    assert state.status == "waiting_human_annotation"
+
+
 def test_finalize_runs_export_and_merge_to_completed(tmp_path: Path, monkeypatch):
     from my_package.workflow.pipeline import WorkflowPipeline
 
@@ -840,6 +1086,61 @@ def test_annotationctl_submit_creates_job_and_prints_job_id(
 
     assert result == 0
     assert calls == [manifest]
+
+
+def test_annotationctl_upload_dispatches_job_id_and_workspace(tmp_path: Path):
+    module = load_annotationctl_module()
+    calls = []
+
+    def fake_run_upload(workspace, job_id, manifest_path=None):
+        calls.append((Path(workspace), job_id, manifest_path))
+        return 0
+
+    module.run_upload = fake_run_upload
+    previous_argv = sys.argv[:]
+    sys.argv = [
+        "annotationctl",
+        "upload",
+        "job-001",
+        "--workspace",
+        str(tmp_path / "workspace"),
+    ]
+    try:
+        result = module.main()
+    finally:
+        sys.argv = previous_argv
+
+    assert result == 0
+    assert calls == [(tmp_path / "workspace", "job-001", None)]
+
+
+def test_annotationctl_upload_dispatches_manifest_when_provided(tmp_path: Path):
+    module = load_annotationctl_module()
+    calls = []
+    manifest = tmp_path / "job.yaml"
+
+    def fake_run_upload(workspace, job_id, manifest_path=None):
+        calls.append((Path(workspace), job_id, Path(manifest_path) if manifest_path else None))
+        return 0
+
+    module.run_upload = fake_run_upload
+    previous_argv = sys.argv[:]
+    sys.argv = [
+        "annotationctl",
+        "upload",
+        "job-001",
+        "--workspace",
+        str(tmp_path / "workspace"),
+        "--manifest",
+        str(manifest),
+    ]
+    try:
+        result = module.main()
+    finally:
+        sys.argv = previous_argv
+
+    assert result == 0
+    assert calls == [(tmp_path / "workspace", "job-001", manifest)]
 
 
 def test_annotationctl_finalize_marks_job_completed(tmp_path: Path):

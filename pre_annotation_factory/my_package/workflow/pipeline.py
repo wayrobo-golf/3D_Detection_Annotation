@@ -103,47 +103,19 @@ class WorkflowPipeline:
         )
         return runtime_yaml_path
 
-    def submit(self, manifest: JobManifest) -> str:
-        job_id = uuid4().hex[:12]
-        job_dir = self.job_store.initialize_job_dir(job_id)
-        extracted_dir = job_dir / "artifacts" / "extracted_bags"
-        xtreme_upload_dir = job_dir / "artifacts" / "xtreme_upload"
-        raw_origin_root = job_dir / "artifacts" / "raw_origin"
-        runtime_auto_annotation_yaml = self._prepare_auto_annotation_yaml(
-            manifest,
-            job_dir,
+    def _upload_xtreme_for_job(
+        self,
+        job_id: str,
+        manifest: JobManifest,
+        state: JobState,
+        xtreme_zip_path: Path,
+    ) -> None:
+        self._save_state(
+            job_id,
+            state,
+            current_step="uploading_xtreme",
+            last_error=None,
         )
-
-        self.extract_archives_fn(
-            manifest.input.source_dir,
-            extracted_dir,
-            recursive=manifest.input.recursive,
-            overwrite=manifest.input.overwrite_extract,
-        )
-
-        if self.get_bags_to_process_fn(extracted_dir):
-            auto_annotation_input = extracted_dir
-        elif self.get_bags_to_process_fn(manifest.input.source_dir):
-            auto_annotation_input = manifest.input.source_dir
-        else:
-            auto_annotation_input = extracted_dir
-
-        runner_kwargs = {
-            "workspace_path": Path(__file__).resolve().parents[3],
-            "xtreme1_output_dir": xtreme_upload_dir,
-            "raw_data_archive_dir": raw_origin_root,
-            "preserve_full_raw_copy": False,
-            "cleanup_share_data": False,
-        }
-        if runtime_auto_annotation_yaml is not None:
-            runner_kwargs["yaml_config_path"] = runtime_auto_annotation_yaml
-
-        artifacts = self.auto_annotation_runner(
-            auto_annotation_input,
-            manifest.location,
-            **runner_kwargs,
-        )
-
         gateway = self.gateway_factory(
             manifest.xtreme.base_url,
             manifest.xtreme.token_env,
@@ -153,26 +125,44 @@ class WorkflowPipeline:
             manifest.xtreme.dataset_type.strip().upper(),
         )
         upload_url, access_url = gateway.request_upload_url(
-            Path(artifacts["xtreme_zip_path"]).name,
+            xtreme_zip_path.name,
             dataset_id,
         )
-        gateway.upload_archive(upload_url, artifacts["xtreme_zip_path"])
+        gateway.upload_archive(upload_url, xtreme_zip_path)
         import_task_serial = gateway.import_archive(dataset_id, access_url)
         gateway.wait_import_done(import_task_serial)
 
-        state = JobState(
-            job_id=job_id,
-            status="waiting_human_annotation",
-            current_step="waiting_human_annotation",
-            xtreme={
+        state.xtreme.update(
+            {
                 "dataset_id": dataset_id,
                 "import_task_serial": import_task_serial,
-            },
+            }
+        )
+        self._save_state(
+            job_id,
+            state,
+            status="waiting_human_annotation",
+            current_step="waiting_human_annotation",
+            last_error=None,
+        )
+
+    def prepare_local(self, manifest: JobManifest) -> str:
+        job_id = uuid4().hex[:12]
+        job_dir = self.job_store.initialize_job_dir(job_id)
+        extracted_dir = job_dir / "artifacts" / "extracted_bags"
+        xtreme_upload_dir = job_dir / "artifacts" / "xtreme_upload"
+        raw_origin_root = job_dir / "artifacts" / "raw_origin"
+        runtime_auto_annotation_yaml = self._prepare_auto_annotation_yaml(
+            manifest,
+            job_dir,
+        )
+        state = JobState(
+            job_id=job_id,
+            status="running",
+            current_step="preparing_inputs",
             paths={
                 "extracted_dir": str(extracted_dir),
-                "xtreme_upload_dir": str(artifacts["xtreme_upload_dir"]),
-                "xtreme_zip_path": str(artifacts["xtreme_zip_path"]),
-                "raw_archive_dir": str(artifacts["raw_archive_dir"]),
+                "xtreme_upload_dir": str(xtreme_upload_dir),
                 **(
                     {"auto_annotation_yaml_path": str(runtime_auto_annotation_yaml)}
                     if runtime_auto_annotation_yaml is not None
@@ -181,7 +171,124 @@ class WorkflowPipeline:
             },
         )
         self.job_store.save_state(job_id, state)
-        return job_id
+
+        try:
+            self._save_state(
+                job_id,
+                state,
+                current_step="extracting_archives",
+                last_error=None,
+            )
+            self.extract_archives_fn(
+                manifest.input.source_dir,
+                extracted_dir,
+                recursive=manifest.input.recursive,
+                overwrite=manifest.input.overwrite_extract,
+            )
+
+            if self.get_bags_to_process_fn(extracted_dir):
+                auto_annotation_input = extracted_dir
+            elif self.get_bags_to_process_fn(manifest.input.source_dir):
+                auto_annotation_input = manifest.input.source_dir
+            else:
+                auto_annotation_input = extracted_dir
+
+            runner_kwargs = {
+                "workspace_path": Path(__file__).resolve().parents[3],
+                "xtreme1_output_dir": xtreme_upload_dir,
+                "raw_data_archive_dir": raw_origin_root,
+                "preserve_full_raw_copy": False,
+                "cleanup_share_data": False,
+            }
+            if runtime_auto_annotation_yaml is not None:
+                runner_kwargs["yaml_config_path"] = runtime_auto_annotation_yaml
+
+            self._save_state(job_id, state, current_step="running_auto_annotation")
+            artifacts = self.auto_annotation_runner(
+                auto_annotation_input,
+                manifest.location,
+                **runner_kwargs,
+            )
+            state.paths.update(
+                {
+                    "xtreme_upload_dir": str(artifacts["xtreme_upload_dir"]),
+                    "xtreme_zip_path": str(artifacts["xtreme_zip_path"]),
+                    "raw_archive_dir": str(artifacts["raw_archive_dir"]),
+                }
+            )
+            self._save_state(
+                job_id,
+                state,
+                status="prepared_for_upload",
+                current_step="prepared_for_upload",
+                last_error=None,
+            )
+            return job_id
+        except Exception as exc:
+            self._save_state(
+                job_id,
+                state,
+                status="failed",
+                last_error=str(exc),
+            )
+            raise
+
+    def submit(self, manifest: JobManifest) -> str:
+        job_id = self.prepare_local(manifest)
+        state = self.job_store.load_state(job_id)
+        try:
+            self._upload_xtreme_for_job(
+                job_id,
+                manifest,
+                state,
+                Path(state.paths["xtreme_zip_path"]),
+            )
+            return job_id
+        except Exception as exc:
+            self._save_state(
+                job_id,
+                state,
+                status="failed",
+                last_error=str(exc),
+            )
+            raise
+
+    def upload_xtreme(self, job_id: str, manifest_path: Path | None = None) -> None:
+        job_dir = self.job_store.jobs_root / job_id
+        job_manifest_path = job_dir / "job.yaml"
+        selected_manifest_path = job_manifest_path
+        if manifest_path is not None:
+            selected_manifest_path = Path(manifest_path)
+            if not selected_manifest_path.exists():
+                raise FileNotFoundError(f"Missing manifest override: {selected_manifest_path}")
+            if not job_manifest_path.exists():
+                shutil.copy2(selected_manifest_path, job_manifest_path)
+                selected_manifest_path = job_manifest_path
+        if not selected_manifest_path.exists():
+            workspace_manifest = self.job_store.workspace_root / "job.yaml"
+            if workspace_manifest.exists():
+                shutil.copy2(workspace_manifest, job_manifest_path)
+                selected_manifest_path = job_manifest_path
+            else:
+                raise FileNotFoundError(
+                    f"Missing job manifest: {job_manifest_path}. "
+                    f"Provide a manifest copy at {workspace_manifest} or rerun submit with the updated workflow."
+                )
+        manifest = load_job_manifest(selected_manifest_path)
+        state = self.job_store.load_state(job_id)
+        xtreme_zip_path = Path(state.paths["xtreme_zip_path"])
+        if not xtreme_zip_path.exists():
+            raise FileNotFoundError(f"Missing Xtreme upload archive: {xtreme_zip_path}")
+        try:
+            self._upload_xtreme_for_job(job_id, manifest, state, xtreme_zip_path)
+        except Exception as exc:
+            self._save_state(
+                job_id,
+                state,
+                status="failed",
+                last_error=str(exc),
+            )
+            raise
 
     def seed_waiting_job(self, job_id: str) -> str:
         self.job_store.initialize_job_dir(job_id)

@@ -4,22 +4,27 @@
 
 1. 准备 `job.yaml`
 2. 运行 `annotationctl submit`
-3. 在 Xtreme1 中人工微调与补标动态障碍物
-4. 运行 `annotationctl finalize`
-5. 获取最终交付 KITTI 数据集
+3. 如 Xtreme 上传失败，运行 `annotationctl upload` 重试上传
+4. 在 Xtreme1 中人工微调与补标动态障碍物
+5. 运行 `annotationctl finalize`
+6. 获取最终交付 KITTI 数据集
 
 ## 1. 运行环境
 
 - 已完成 `3D_Detection_Annotation` 工作区编译
 - 服务器或本机可访问 Xtreme1
 - 预标注所需地图、XML、外参配置已准备完成
-- 运行前导出 Xtreme Token：
+- 在仓库根目录准备 `.env`，写入 Xtreme Token：
 
-```bash
-export XTREME1_TOKEN=<your_token>
+```dotenv
+XTREME1_TOKEN=<your_token>
 ```
 
-## 2. job.yaml 最小示例
+`annotationctl.py` 启动时会自动读取仓库根目录 `.env`；如果当前 shell 里已经存在同名环境变量，则以 shell 中的值为准。
+
+## 2. job.yaml 完整示例
+
+说明：本节展示的是当前 `job.yaml` 可配置字段的完整示例，不是 `submit` 内部全部运行参数的完整展开。
 
 ```yaml
 job_name: baoli_debug_resubmit
@@ -51,17 +56,44 @@ output:
   final_dataset_dir: /tmp/annotationctl_baoli_debug_resubmit/final_delivery
 ```
 
-说明：
+字段说明：
 
+- `job_name`：任务名称，用于区分不同 job，便于人工识别。
+- `location`：当前数据对应的地点或批次标识，会传给预标注和后处理流程。
+- `input.source_dir`：输入数据目录，可以放原始 rosbag 目录，也可以放待解压的压缩包目录。
+- `input.recursive`：是否递归扫描 `source_dir` 的子目录查找压缩包；`false` 只扫描顶层，`true` 会继续扫描下级目录。
+- `input.overwrite_extract`：解压时如果目标位置已有同名内容，是否先删除旧内容再重新解压；`false` 不主动覆盖，`true` 会清理后重解。
+- `workspace.root_dir`：annotationctl 工作目录，`jobs/<job_id>/`、中间产物、状态文件都会写到这里。
 - `auto_annotation.base_yaml_path` 是模板 yaml
 - `auto_annotation.overrides` 会生成到 job 私有 runtime yaml，而不会改仓库里的 `default.yaml`
-- `xtreme.token_env` 只写环境变量名，不在 `job.yaml` 中写明文 token
+- `xtreme.base_url`：Xtreme1 服务地址。
+- `xtreme.token_env`：Xtreme1 token 的环境变量名，只写变量名，不在 `job.yaml` 中写明文 token；默认可配合仓库根目录 `.env` 使用。
+- `xtreme.dataset_name`：本次 submit 在 Xtreme1 中创建或复用的数据集名称。
+- `xtreme.dataset_type`：Xtreme1 数据集类型，当前完整示例使用 `lidar_fusion`。
+- `output.final_dataset_dir`：最终交付数据集的目标目录配置，供收尾阶段输出使用。
+
+当前未开放到 `job.yaml`、而是由代码内固定传入的运行参数：
+
+- `workspace_path`：固定为当前仓库根目录，用于回放和后处理阶段定位工作区。
+- `xtreme1_output_dir`：固定写入 `<workspace.root_dir>/jobs/<job_id>/artifacts/xtreme_upload/`。
+- `raw_data_archive_dir`：固定写入 `<workspace.root_dir>/jobs/<job_id>/artifacts/raw_origin/`。
+- `preserve_full_raw_copy=False`：当前不会额外保留一份 `origin_full` 完整原始备份。
+- `cleanup_share_data=False`：当前不会在流程结束后清空原始生成目录，而是走归档逻辑。
+
+如果后续需要让这些参数也能在 `job.yaml` 中配置，需要先扩展 manifest 模型和 `submit` 管线；当前版本直接写在代码里。
 
 ## 3. 提交任务
 
 ```bash
-conda run -n nusc_env python pre_annotation_factory/scripts/annotationctl.py submit /path/to/job.yaml
+conda run --live-stream -n nusc_env python -u pre_annotation_factory/scripts/annotationctl.py submit /path/to/job.yaml
 ```
+
+`submit` 当前会分两段执行：
+
+1. 本地回放 rosbag、生成 Xtreme 上传包、归档原始数据
+2. 调用 Xtreme 接口创建数据集并上传导入
+
+如果第 2 段失败，只要本地产物已经生成完成，就不需要重跑 rosbag，可直接使用下文的 `upload` 命令重试。
 
 成功后会输出：
 
@@ -82,6 +114,29 @@ status=waiting_human_annotation
 - `artifacts/xtreme_upload/*.zip`
 - `artifacts/raw_origin/`
 - `runtime/auto_annotation.yaml`
+- `jobs/<job_id>/job.yaml`
+
+### 3.1 仅重试 Xtreme 上传
+
+当 `state.json` 中的 `current_step` 停在 `uploading_xtreme`，且 `artifacts/xtreme_upload/*.zip` 已经生成时，可以直接重试上传：
+
+```bash
+conda run --live-stream -n nusc_env python -u pre_annotation_factory/scripts/annotationctl.py upload <job_id> --workspace <workspace.root_dir>
+```
+
+这个命令会复用：
+
+- `jobs/<job_id>/job.yaml`
+- `state.json`
+- `artifacts/xtreme_upload/*.zip`
+
+不会重新回放 rosbag，也不会重新生成本地打包产物。
+
+对于旧版本工作流生成的失败 job，如果 `jobs/<job_id>/job.yaml` 不存在，`upload` 会优先回退使用 `<workspace.root_dir>/job.yaml`。如果工作区里也没有这份 manifest，可以显式指定：
+
+```bash
+conda run --live-stream -n nusc_env python -u pre_annotation_factory/scripts/annotationctl.py upload <job_id> --workspace <workspace.root_dir> --manifest /path/to/job.yaml
+```
 
 ## 4. 查看状态
 
@@ -102,7 +157,7 @@ conda run -n nusc_env python pre_annotation_factory/scripts/annotationctl.py sta
 ## 6. 收尾生成最终交付数据集
 
 ```bash
-conda run -n nusc_env python pre_annotation_factory/scripts/annotationctl.py finalize <job_id> --workspace <workspace.root_dir>
+conda run --live-stream -n nusc_env python -u pre_annotation_factory/scripts/annotationctl.py finalize <job_id> --workspace <workspace.root_dir>
 ```
 
 成功后会输出：
@@ -134,6 +189,14 @@ status=completed
 - 自动上传是否带了：
   - `dataFormat=XTREME1`
   - `resultType=GROUND_TRUTH`
+
+如果 `submit` 或 `upload` 在 `uploading_xtreme` 阶段失败，优先检查：
+
+- `state.json` 中的 `current_step` 是否为 `uploading_xtreme`
+- `state.json` 中的 `last_error`
+- `artifacts/xtreme_upload/*.zip` 是否已生成
+
+如果 zip 已生成，可直接执行一次 `annotationctl upload <job_id> --workspace <workspace.root_dir>` 重试，不需要重新回放 rosbag。
 
 ### 7.2 submit 后全是空帧
 
