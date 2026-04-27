@@ -11,6 +11,7 @@ find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 find_package(common_utils REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED)
@@ -40,6 +41,7 @@ ament_target_dependencies(automatic_annotation_node
   std_msgs
   sensor_msgs
   geometry_msgs
+  nav_msgs
   common_utils
   pcl_conversions
   Eigen3
