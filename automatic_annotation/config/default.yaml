@@ -6,6 +6,21 @@ automatic_annotation_node:
     origin_point_cloud_topic: "livox/pointcloud"
     undistorted_point_cloud_topic: "lio/undistort_pc"
     accumulate_pc_save_folder: "lidar_point_cloud_0"
+    raw_deskew_mode: "accurate"
+    raw_deskew_fixed_frame: "ins_map"
+    raw_deskew_reference_time: "header_stamp"
+    raw_deskew_timestamp_unit_sec: 1.0e-9
+    raw_deskew_timestamp_polarity: "from_scan_start"
+    raw_deskew_bucket_count_fast: 10
+    raw_deskew_bucket_count_accurate: 50
+    raw_deskew_publish_debug_cloud: false
+    raw_deskew_save_debug_cloud: false
+    raw_deskew_save_folder: "lidar_point_cloud_deskewed_0"
+    raw_deskew_min_valid_ratio: 0.9
+    raw_deskew_pose_source: "ins_odom"
+    raw_deskew_pose_topic: "/novatel/oem7/ins_odom"
+    raw_deskew_missing_pose_policy: "fallback_fast"
+    raw_deskew_pose_cache_duration_sec: 30.0
     # accumulate_pc_save_folder: "samples/LIDAR_TOP"
 
     image_source_type: 1
@@ -27,8 +42,8 @@ automatic_annotation_node:
     generate_nusc_label: false
     generate_xtreme1_json: true
     enable_visual_verify: true
-    global_pc_map_addr: "/home/keyaoli/Data/AutoAnnotation/MapAnnotation/bl_20260317/velodyne_points/data/colored_lidar_merged.pcd"
-    pc_annotation_file_addr: "/home/keyaoli/Data/AutoAnnotation/MapAnnotation/bl_20260317/tracklet_labels.xml"
+    global_pc_map_addr: "/home/keyaoli/Data/AutoAnnotation/MapAnnotation/bj_20260319/velodyne_points/data/colored_lidar_merged.pcd"
+    pc_annotation_file_addr: "/home/keyaoli/Data/AutoAnnotation/MapAnnotation/bj_20260319/tracklet_labels.xml"
 
     custom_record_folder_name: ""   # 为了自动化脚本可以传入scene标识
 
@@ -43,14 +58,14 @@ automatic_annotation_node:
     # default_tf_lcam_to_lidar: [0.070000, 0.115999, 0.071299, -122.87, -0.20, -89.00]
     # default_tf_lidar_to_ins: [-0.336825, 0.004557, 1.299241, 1.88, -0.01, -2.60]
     # binjiang
-    # default_tf_lcam_to_lidar: [0.070000, 0.115999, 0.071299, -122.60, -0.80, -91.78]
-    # default_tf_lidar_to_ins: [-0.336825, 0.004557, 1.299241, 0.03, 1.11, -1.66]
+    default_tf_lcam_to_lidar: [0.070000, 0.115999, 0.071299, -122.60, -0.80, -91.78]
+    default_tf_lidar_to_ins: [-0.336825, 0.004557, 1.299241, 0.03, 1.11, -1.66]
     # xiangxue 
     # default_tf_lcam_to_lidar: [0.070000, 0.115999, 0.071299, -121.70, -1.80, -90.50]
     # default_tf_lidar_to_ins: [-0.336825, 0.004557, 1.299241, 0.09, -0.72, 0.64]
     # 隐秀25
-    default_tf_lcam_to_lidar: [0.070000, 0.115999, 0.071299, -124.10, -0.00, -89.70]
-    default_tf_lidar_to_ins: [-0.336825, 0.004557, 1.299241, -0.03, -1.17, -3.23]
+    # default_tf_lcam_to_lidar: [0.070000, 0.115999, 0.071299, -124.10, -0.00, -89.70]
+    # default_tf_lidar_to_ins: [-0.336825, 0.004557, 1.299241, -0.03, -1.17, -3.23]
     # dongzhuang
     # default_tf_lcam_to_lidar: [0.070000, 0.115999, 0.071299, -121.90, -0.47, -89.90]
     # default_tf_lidar_to_ins: [-0.336825, 0.004557, 1.299241, -0.73, -0.52, -0.93]

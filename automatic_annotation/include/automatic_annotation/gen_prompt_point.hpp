@@ -23,6 +23,7 @@
 #include <Eigen/Geometry>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <memory>
+#include <nav_msgs/msg/odometry.hpp>
 #include <string>
 #include <tf2_eigen/tf2_eigen.hpp>
 #include <vector>
@@ -64,6 +65,26 @@ struct PointXYZIT {
 
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 } EIGEN_ALIGN16;
+
+enum class RawDeskewMode { Off = 0, Fast = 1, Accurate = 2 };
+
+enum class RawDeskewReferenceTime {
+  HeaderStamp = 0,
+  ScanStart = 1,
+  ScanEnd = 2
+};
+
+enum class RawDeskewTimestampPolarity {
+  FromScanStart = 0,
+  FromScanEnd = 1
+};
+
+enum class RawDeskewPoseSource { InsOdom = 0, Tf = 1 };
+
+enum class RawDeskewMissingPosePolicy {
+  FallbackFast = 0,
+  Skip = 1
+};
 
 struct BoundingBox {
   // === 1. 基础属性 (对应 XML 外层 item) ===
@@ -112,6 +133,24 @@ struct AutoAnnotationConfig {
   int64_t target_accumulate_pc_num = -1;
   bool publish_accumulated_pc = false;
   std::string accumulate_pc_save_folder;
+  RawDeskewMode raw_deskew_mode = RawDeskewMode::Off;
+  std::string raw_deskew_fixed_frame = ConstValue::kInsMap;
+  RawDeskewReferenceTime raw_deskew_reference_time =
+      RawDeskewReferenceTime::HeaderStamp;
+  double raw_deskew_timestamp_unit_sec = 1e-6;
+  RawDeskewTimestampPolarity raw_deskew_timestamp_polarity =
+      RawDeskewTimestampPolarity::FromScanEnd;
+  int64_t raw_deskew_bucket_count_fast = 10;
+  int64_t raw_deskew_bucket_count_accurate = 50;
+  bool raw_deskew_publish_debug_cloud = false;
+  bool raw_deskew_save_debug_cloud = false;
+  double raw_deskew_min_valid_ratio = 0.9;
+  std::string raw_deskew_save_folder;
+  RawDeskewPoseSource raw_deskew_pose_source = RawDeskewPoseSource::InsOdom;
+  std::string raw_deskew_pose_topic = "/novatel/oem7/ins_odom";
+  RawDeskewMissingPosePolicy raw_deskew_missing_pose_policy =
+      RawDeskewMissingPosePolicy::FallbackFast;
+  double raw_deskew_pose_cache_duration_sec = 30.0;
 
   int64_t image_source_type = -1;    // 1:左目相机 2:右目相机  3:双目相机
   int64_t image_save_interval = -1;  // 存储图片的间隔
@@ -160,6 +199,7 @@ struct AutoAnnotationStatus {
   // 点云缓存
   std::deque<pcl::PointCloud<LivoxPoint>::Ptr> queue_original;
   std::deque<pcl::PointCloud<UndistortedLivoxPoint>::Ptr> queue_undistorted;
+  std::deque<pcl::PointCloud<PointXYZIT>::Ptr> queue_deskewed;
   pcl::PointCloud<PointXYZIT>::Ptr latest_accumulated_cloud;
   rclcpp::Time latest_cloud_timestamp;
   // 全局地图缓存
@@ -176,10 +216,16 @@ struct AutoAnnotationStatus {
   Eigen::Isometry3d isometry_rcam2lidar = Eigen::Isometry3d::Identity();
   bool has_tf_lidar_link_2_ins_link = false;
   Eigen::Isometry3d isometry_lidar2ins = Eigen::Isometry3d::Identity();
+  struct TimedPoseSample {
+    int64_t time_ns = 0;
+    Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
+  };
+  std::deque<TimedPoseSample> ins_pose_cache;
   // 存储路径
   std::string data_record_root_folder;   // 记录总根目录，用于放 JSON
   bool has_saved_camera_config = false;  // 标记是否已经生成过配置文件
   std::string accumulate_pc_save_folder;
+  std::string raw_deskew_save_folder;
   std::string left_label_save_folder;
   std::string left_original_image_save_folder;
   std::string left_fuse_image_save_folder;
@@ -208,12 +254,17 @@ class GenPromptPoint {
       left_camera_intrinsics_sub_ = nullptr;
   rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr
       right_camera_intrinsics_sub_ = nullptr;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr ins_odom_sub_ =
+      nullptr;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_ = nullptr;
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_ = nullptr;
   rclcpp::TimerBase::SharedPtr tf_check_timer_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr
       accumulated_pc_pub_ = nullptr;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr
+      raw_deskewed_pc_pub_ = nullptr;
   rclcpp::CallbackGroup::SharedPtr callback_group_lidar_ = nullptr;
+  rclcpp::CallbackGroup::SharedPtr callback_group_pose_ = nullptr;
   rclcpp::CallbackGroup::SharedPtr callback_group_camera_ = nullptr;
 
   AutoAnnotationConfig node_config_;
@@ -222,6 +273,7 @@ class GenPromptPoint {
   struct LockGroup {
     std::mutex mutex_use_tf;
     std::mutex mutex_cache_cloud;
+    std::mutex mutex_pose_cache;
   };
   mutable LockGroup locks_;
   std::map<std::string, uint8_t> class_name_to_id_;
@@ -236,6 +288,7 @@ class GenPromptPoint {
   void InitGlobalMapAndLabelAddr();
   void InitPointCloudTopic();
   void InitPointCloudSettings();
+  void InitRawDeskewSettings();
   void InitImageSettings();
   void InitCameraTopics();
   void InitCameraIntrinsicsTopics();
@@ -247,13 +300,16 @@ class GenPromptPoint {
   void InitClassMappingAndReflact();
   void InitPublishAndSubscription();
   void CreateAccumulatePointCloudPublisher();
+  void CreateRawDeskewPointCloudPublisher();
   void CreatePointCloudSubscription();
+  void CreateInsOdomSubscription();
   void CreateImageSubscription();
   void CreateCameraIntrinsicsSubscription();
   void InitTfListener();
   // 回调函数
   void LeftIntrinsicsCallback(std_msgs::msg::Float64MultiArray::SharedPtr msg);
   void RightIntrinsicsCallback(std_msgs::msg::Float64MultiArray::SharedPtr msg);
+  void InsOdomCallback(nav_msgs::msg::Odometry::SharedPtr msg);
   void CheckTfCallback();
   // 业务函数
   void HandleLeftImageMsg(const sensor_msgs::msg::Image::SharedPtr msg);
@@ -371,6 +427,74 @@ class GenPromptPoint {
                                     const std::string& fixed_frame,
                                     const Eigen::Isometry3d& fallback_extrinsic,
                                     Eigen::Matrix4f& out_tf_mat);
+  struct DeskewPoseSample {
+    int64_t time_ns = 0;
+    Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
+  };
+  struct DeskewPoseLookupStats {
+    size_t cache_sample_count = 0;
+    size_t cache_hit_count = 0;
+    size_t cache_snapshot_size = 0;
+    bool used_pose_cache = false;
+    bool fallback_fast = false;
+    int64_t cache_wait_ms = 0;
+    int64_t cache_oldest_time_ns = 0;
+    int64_t cache_newest_time_ns = 0;
+    std::string failure_reason = "none";
+  };
+  pcl::PointCloud<PointXYZIT>::Ptr DeskewOriginalPointCloudToPointXYZIT(
+      const pcl::PointCloud<LivoxPoint>::Ptr& input_cloud,
+      const std_msgs::msg::Header& header);
+  bool LookupDeskewPoseAtTime(const std::string& fixed_frame,
+                              const std::string& sensor_frame,
+                              const std::string& ins_frame,
+                              const rclcpp::Time& query_time,
+                              Eigen::Isometry3d& out_pose);
+  bool SampleDeskewTrajectory(const std_msgs::msg::Header& header,
+                              uint32_t max_raw_timestamp, size_t sample_count,
+                              std::vector<DeskewPoseSample>& out_samples,
+                              int64_t& out_reference_time_ns,
+                              int64_t& out_scan_start_time_ns,
+                              int64_t& out_scan_end_time_ns,
+                              DeskewPoseLookupStats* out_stats = nullptr);
+  bool InterpolatePoseAtTime(const std::vector<DeskewPoseSample>& samples,
+                             int64_t query_time_ns,
+                             Eigen::Isometry3d& out_pose) const;
+  bool LookupDeskewPoseFromCacheAtTime(int64_t query_time_ns,
+                                       Eigen::Isometry3d& out_pose);
+  bool GetPoseCacheCoverageSnapshot(int64_t& out_oldest_time_ns,
+                                    int64_t& out_newest_time_ns) const;
+  bool WaitForPoseCacheCoverage(int64_t scan_start_time_ns,
+                                int64_t scan_end_time_ns,
+                                int64_t timeout_ms,
+                                int64_t poll_interval_ms,
+                                int64_t& out_waited_ms,
+                                int64_t& out_oldest_time_ns,
+                                int64_t& out_newest_time_ns) const;
+  bool CopyPoseCacheWindowSnapshot(
+      int64_t scan_start_time_ns, int64_t scan_end_time_ns,
+      std::vector<DeskewPoseSample>& out_snapshot,
+      int64_t& out_oldest_time_ns,
+      int64_t& out_newest_time_ns) const;
+  void PrunePoseCacheLocked(int64_t latest_time_ns);
+  bool RunFastDeskew(const pcl::PointCloud<LivoxPoint>::Ptr& input_cloud,
+                     const std_msgs::msg::Header& header,
+                     uint32_t max_raw_timestamp,
+                     const Eigen::Isometry3d& reference_pose,
+                     int64_t scan_start_time_ns, int64_t scan_end_time_ns,
+                     pcl::PointCloud<PointXYZIT>::Ptr& output_cloud,
+                     size_t& out_valid_points,
+                     DeskewPoseLookupStats* out_stats = nullptr);
+  bool UsePoseCacheForAccurateDeskew() const;
+  int64_t ComputePointAbsoluteTimeNs(uint32_t raw_timestamp,
+                                     const std_msgs::msg::Header& header,
+                                     uint32_t max_raw_timestamp) const;
+  int64_t ResolveDeskewReferenceTimeNs(int64_t header_stamp_ns,
+                                       int64_t scan_start_time_ns,
+                                       int64_t scan_end_time_ns) const;
+  void PublishOrSaveDeskewedPointCloud(
+      const pcl::PointCloud<PointXYZIT>::Ptr& deskewed_cloud,
+      const std_msgs::msg::Header& header);
   void GenerateCameraExtrinsic(int64_t timestamp, int width, int height,
                                const Eigen::Matrix4f& tf_map_to_lidar);
   bool GetMapToCameraAndLidarTf(const rclcpp::Time& img_time,
@@ -497,6 +621,8 @@ class GenPromptPoint {
 
       // 提取最新帧（目标帧）的绝对时间（秒）
       double target_time_s = rclcpp::Time(header.stamp).nanoseconds() / 1e9;
+      float oldest_age_s = 0.0f;
+      float newest_age_s = std::numeric_limits<float>::max();
 
       // 预分配内存，避免频繁扩容
       size_t total_points = 0;
@@ -515,6 +641,8 @@ class GenPromptPoint {
 
         // 容错处理：防止由于系统时间抖动出现极小的负数
         if (age < 0.0f) age = 0.0f;
+        oldest_age_s = std::max(oldest_age_s, age);
+        newest_age_s = std::min(newest_age_s, age);
 
         // 将该帧点云从 Map 转到 最新一帧的雷达坐标系
         typename pcl::PointCloud<PointT>::Ptr transformed_frame(
@@ -553,6 +681,17 @@ class GenPromptPoint {
             final_cloud_local;  // 统一覆盖
         annotation_status_.latest_cloud_timestamp = header.stamp;
       }
+      if (newest_age_s == std::numeric_limits<float>::max()) {
+        newest_age_s = 0.0f;
+      }
+      THROTTLEINFO(
+          1,
+          "Accumulated cache snapshot. input_header_ns={} final_header_us={} "
+          "queue_size={} final_cloud_size={} oldest_age_s={:.3f} "
+          "newest_age_s={:.3f}",
+          rclcpp::Time(header.stamp).nanoseconds(), current_stamp_us,
+          cloud_queue.size(), final_cloud_local->size(), oldest_age_s,
+          newest_age_s);
 
       auto end_time5 = std::chrono::high_resolution_clock::now();
       double ms5 = std::chrono::duration_cast<std::chrono::microseconds>(

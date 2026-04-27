@@ -5,18 +5,140 @@
 
 #include <algorithm>
 #include <ament_index_cpp/get_package_share_directory.hpp>
+#include <cctype>
 #include <chrono>
+#include <cmath>
 #include <iomanip>
 #include <limits>
 #include <map>
 #include <memory>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 namespace automatic_annotation {
+namespace {
+
+constexpr int64_t kPoseCacheCoverageWaitTimeoutMs = 30;
+constexpr int64_t kPoseCacheCoveragePollIntervalMs = 1;
+
+std::string ToLowerCopy(std::string value) {
+  std::transform(value.begin(), value.end(), value.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return value;
+}
+
+RawDeskewMode ParseRawDeskewMode(const std::string& value) {
+  const std::string normalized = ToLowerCopy(value);
+  if (normalized == "off") {
+    return RawDeskewMode::Off;
+  }
+  if (normalized == "accurate") {
+    return RawDeskewMode::Accurate;
+  }
+  return RawDeskewMode::Fast;
+}
+
+RawDeskewReferenceTime ParseRawDeskewReferenceTime(const std::string& value) {
+  const std::string normalized = ToLowerCopy(value);
+  if (normalized == "scan_start") {
+    return RawDeskewReferenceTime::ScanStart;
+  }
+  if (normalized == "scan_end") {
+    return RawDeskewReferenceTime::ScanEnd;
+  }
+  return RawDeskewReferenceTime::HeaderStamp;
+}
+
+RawDeskewTimestampPolarity ParseRawDeskewTimestampPolarity(
+    const std::string& value) {
+  const std::string normalized = ToLowerCopy(value);
+  if (normalized == "from_scan_start") {
+    return RawDeskewTimestampPolarity::FromScanStart;
+  }
+  return RawDeskewTimestampPolarity::FromScanEnd;
+}
+
+RawDeskewPoseSource ParseRawDeskewPoseSource(const std::string& value) {
+  const std::string normalized = ToLowerCopy(value);
+  if (normalized == "tf") {
+    return RawDeskewPoseSource::Tf;
+  }
+  return RawDeskewPoseSource::InsOdom;
+}
+
+RawDeskewMissingPosePolicy ParseRawDeskewMissingPosePolicy(
+    const std::string& value) {
+  const std::string normalized = ToLowerCopy(value);
+  if (normalized == "skip") {
+    return RawDeskewMissingPosePolicy::Skip;
+  }
+  return RawDeskewMissingPosePolicy::FallbackFast;
+}
+
+const char* RawDeskewModeToString(RawDeskewMode mode) {
+  switch (mode) {
+    case RawDeskewMode::Off:
+      return "off";
+    case RawDeskewMode::Fast:
+      return "fast";
+    case RawDeskewMode::Accurate:
+      return "accurate";
+  }
+  return "off";
+}
+
+const char* RawDeskewReferenceTimeToString(RawDeskewReferenceTime reference) {
+  switch (reference) {
+    case RawDeskewReferenceTime::HeaderStamp:
+      return "header_stamp";
+    case RawDeskewReferenceTime::ScanStart:
+      return "scan_start";
+    case RawDeskewReferenceTime::ScanEnd:
+      return "scan_end";
+  }
+  return "header_stamp";
+}
+
+const char* RawDeskewTimestampPolarityToString(
+    RawDeskewTimestampPolarity polarity) {
+  switch (polarity) {
+    case RawDeskewTimestampPolarity::FromScanStart:
+      return "from_scan_start";
+    case RawDeskewTimestampPolarity::FromScanEnd:
+      return "from_scan_end";
+  }
+  return "from_scan_end";
+}
+
+const char* RawDeskewPoseSourceToString(RawDeskewPoseSource pose_source) {
+  switch (pose_source) {
+    case RawDeskewPoseSource::InsOdom:
+      return "ins_odom";
+    case RawDeskewPoseSource::Tf:
+      return "tf";
+  }
+  return "ins_odom";
+}
+
+const char* RawDeskewMissingPosePolicyToString(
+    RawDeskewMissingPosePolicy policy) {
+  switch (policy) {
+    case RawDeskewMissingPosePolicy::FallbackFast:
+      return "fallback_fast";
+    case RawDeskewMissingPosePolicy::Skip:
+      return "skip";
+  }
+  return "fallback_fast";
+}
+
+}  // namespace
+
 GenPromptPoint::GenPromptPoint(const rclcpp::Node::SharedPtr& node)
     : node_(node) {
   callback_group_lidar_ = node_->create_callback_group(
+      rclcpp::CallbackGroupType::MutuallyExclusive);
+  callback_group_pose_ = node_->create_callback_group(
       rclcpp::CallbackGroupType::MutuallyExclusive);
   callback_group_camera_ = node_->create_callback_group(
       rclcpp::CallbackGroupType::MutuallyExclusive);
@@ -36,6 +158,7 @@ void GenPromptPoint::InitConfigFromParamsServer() {
   InitGlobalMapAndLabelAddr();
   InitPointCloudTopic();
   InitPointCloudSettings();
+  InitRawDeskewSettings();
   InitImageSettings();
   InitCameraTopics();
   InitCameraIntrinsicsTopics();
@@ -83,6 +206,74 @@ void GenPromptPoint::InitPointCloudSettings() {
   node_config_.publish_accumulated_pc =
       get_param_value_form_params_server<bool>(
           "publish_accumulated_pc", ConstValue::kDefaultPublishAccumulatedPC);
+}
+
+void GenPromptPoint::InitRawDeskewSettings() {
+  std::string raw_deskew_mode =
+      get_param_value_form_params_server<std::string>("raw_deskew_mode", "off");
+  node_config_.raw_deskew_mode = ParseRawDeskewMode(raw_deskew_mode);
+
+  node_config_.raw_deskew_fixed_frame =
+      get_param_value_form_params_server<std::string>("raw_deskew_fixed_frame",
+                                                      ConstValue::kInsMap);
+
+  std::string raw_deskew_reference_time =
+      get_param_value_form_params_server<std::string>(
+          "raw_deskew_reference_time", "header_stamp");
+  node_config_.raw_deskew_reference_time =
+      ParseRawDeskewReferenceTime(raw_deskew_reference_time);
+
+  node_config_.raw_deskew_timestamp_unit_sec =
+      get_param_value_form_params_server<double>(
+          "raw_deskew_timestamp_unit_sec", 1e-6);
+
+  std::string raw_deskew_timestamp_polarity =
+      get_param_value_form_params_server<std::string>(
+          "raw_deskew_timestamp_polarity", "from_scan_end");
+  node_config_.raw_deskew_timestamp_polarity =
+      ParseRawDeskewTimestampPolarity(raw_deskew_timestamp_polarity);
+
+  node_config_.raw_deskew_bucket_count_fast =
+      get_param_value_form_params_server<int64_t>("raw_deskew_bucket_count_fast",
+                                                  10);
+  node_config_.raw_deskew_bucket_count_accurate =
+      get_param_value_form_params_server<int64_t>(
+          "raw_deskew_bucket_count_accurate", 50);
+  node_config_.raw_deskew_publish_debug_cloud =
+      get_param_value_form_params_server<bool>(
+          "raw_deskew_publish_debug_cloud", false);
+  node_config_.raw_deskew_save_debug_cloud =
+      get_param_value_form_params_server<bool>("raw_deskew_save_debug_cloud",
+                                               false);
+  node_config_.raw_deskew_min_valid_ratio =
+      get_param_value_form_params_server<double>("raw_deskew_min_valid_ratio",
+                                                 0.9);
+  node_config_.raw_deskew_save_folder =
+      get_param_value_form_params_server<std::string>(
+          "raw_deskew_save_folder", "lidar_point_cloud_deskewed_0");
+  node_config_.raw_deskew_pose_source = ParseRawDeskewPoseSource(
+      get_param_value_form_params_server<std::string>(
+          "raw_deskew_pose_source", "ins_odom"));
+  node_config_.raw_deskew_pose_topic =
+      get_param_value_form_params_server<std::string>(
+          "raw_deskew_pose_topic", "/novatel/oem7/ins_odom");
+  node_config_.raw_deskew_missing_pose_policy =
+      ParseRawDeskewMissingPosePolicy(
+          get_param_value_form_params_server<std::string>(
+              "raw_deskew_missing_pose_policy", "fallback_fast"));
+  node_config_.raw_deskew_pose_cache_duration_sec =
+      get_param_value_form_params_server<double>(
+          "raw_deskew_pose_cache_duration_sec", 30.0);
+
+  INFO(
+      "Raw deskew resolved. mode={} pose_source={} pose_topic={} "
+      "missing_pose_policy={} pose_cache_duration_sec={:.1f}",
+      RawDeskewModeToString(node_config_.raw_deskew_mode),
+      RawDeskewPoseSourceToString(node_config_.raw_deskew_pose_source),
+      node_config_.raw_deskew_pose_topic,
+      RawDeskewMissingPosePolicyToString(
+          node_config_.raw_deskew_missing_pose_policy),
+      node_config_.raw_deskew_pose_cache_duration_sec);
 }
 
 void GenPromptPoint::InitImageSettings() {
@@ -238,6 +429,20 @@ void GenPromptPoint::InitSaveFolder() {
   } else {
     throw std::runtime_error(
         "Unable to get full permission for saving point cloud");
+  }
+
+  if (node_config_.raw_deskew_save_debug_cloud) {
+    std::filesystem::path raw_deskew_save_relative_folder(
+        node_config_.raw_deskew_save_folder);
+    std::filesystem::path raw_deskew_save_folder =
+        data_record_folder_path / raw_deskew_save_relative_folder;
+    if (EnsureDirectoryWithFullPermissions(raw_deskew_save_folder)) {
+      annotation_status_.raw_deskew_save_folder =
+          raw_deskew_save_folder.string();
+    } else {
+      throw std::runtime_error(
+          "Unable to get full permission for saving raw deskew point cloud");
+    }
   }
 
   if (node_config_.image_source_type &
@@ -465,6 +670,8 @@ void GenPromptPoint::InitMapAndLabel() {
 
 void GenPromptPoint::InitPublishAndSubscription() {
   CreateAccumulatePointCloudPublisher();
+  CreateRawDeskewPointCloudPublisher();
+  CreateInsOdomSubscription();
   CreatePointCloudSubscription();
   CreateImageSubscription();
   CreateCameraIntrinsicsSubscription();
@@ -485,6 +692,36 @@ void GenPromptPoint::CreateAccumulatePointCloudPublisher() {
   }
 }
 
+void GenPromptPoint::CreateRawDeskewPointCloudPublisher() {
+  if (node_config_.raw_deskew_publish_debug_cloud) {
+    INFO("Configured to publish raw deskewed point cloud, initializing "
+         "publisher.");
+    raw_deskewed_pc_pub_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>(
+        "debug/raw_deskewed_pc", 1);
+  } else {
+    INFO("Not configured to publish raw deskewed point cloud, skipping "
+         "publisher initialization.");
+  }
+}
+
+void GenPromptPoint::CreateInsOdomSubscription() {
+  if (node_config_.raw_deskew_pose_source != RawDeskewPoseSource::InsOdom) {
+    INFO("Raw deskew pose source is {}, skipping INS odom subscription.",
+         RawDeskewPoseSourceToString(node_config_.raw_deskew_pose_source));
+    return;
+  }
+  rclcpp::SubscriptionOptions options;
+  options.callback_group = callback_group_pose_;
+  INFO("Subscribing to deskew pose topic: {}", node_config_.raw_deskew_pose_topic);
+  ins_odom_sub_ = node_->create_subscription<nav_msgs::msg::Odometry>(
+      node_config_.raw_deskew_pose_topic,
+      rclcpp::SensorDataQoS().keep_last(ConstValue::kLidarQueueSize * 20),
+      [this](const nav_msgs::msg::Odometry::SharedPtr msg) {
+        InsOdomCallback(msg);
+      },
+      options);
+}
+
 void GenPromptPoint::CreatePointCloudSubscription() {
   // 准备订阅选项，指定回调组
   rclcpp::SubscriptionOptions options;
@@ -494,6 +731,7 @@ void GenPromptPoint::CreatePointCloudSubscription() {
     // 创建点云缓存
     INFO("Initialize queue_original");
     annotation_status_.queue_original.clear();
+    annotation_status_.queue_deskewed.clear();
     // 创建订阅
     INFO("Subscribing to original point cloud topic: {}",
          node_config_.point_cloud_topic);
@@ -503,10 +741,43 @@ void GenPromptPoint::CreatePointCloudSubscription() {
         [this](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
           auto pcl_cloud = this->ConvertMsgToPCLPointCloud<LivoxPoint>(msg);
           if (pcl_cloud) {
-            // 去运动畸变(暂不实现)
-            // 累积点云
-            AccumulatePointCloudBack<LivoxPoint>(
-                pcl_cloud, annotation_status_.queue_original, msg->header);
+            uint32_t first_raw_timestamp = 0;
+            uint32_t last_raw_timestamp = 0;
+            uint32_t max_raw_timestamp = 0;
+            if (!pcl_cloud->points.empty()) {
+              first_raw_timestamp = pcl_cloud->points.front().timestamp;
+              last_raw_timestamp = pcl_cloud->points.back().timestamp;
+              for (const auto& pt : pcl_cloud->points) {
+                max_raw_timestamp = std::max(max_raw_timestamp, pt.timestamp);
+              }
+            }
+            THROTTLEINFO(
+                1,
+                "Raw cloud input snapshot. header_ns={} frame_id={} size={} "
+                "first_raw_ts={} last_raw_ts={} max_raw_ts={} deskew_mode={}",
+                rclcpp::Time(msg->header.stamp).nanoseconds(),
+                msg->header.frame_id, pcl_cloud->size(), first_raw_timestamp,
+                last_raw_timestamp, max_raw_timestamp,
+                RawDeskewModeToString(node_config_.raw_deskew_mode));
+            if (node_config_.raw_deskew_mode == RawDeskewMode::Off) {
+              AccumulatePointCloudBack<LivoxPoint>(
+                  pcl_cloud, annotation_status_.queue_original, msg->header);
+              return;
+            }
+
+            auto deskewed_cloud =
+                DeskewOriginalPointCloudToPointXYZIT(pcl_cloud, msg->header);
+            if (!deskewed_cloud || deskewed_cloud->empty()) {
+              THROTTLEWARN(2,
+                           "Skipping raw cloud at {} because deskew failed or "
+                           "produced too few valid points.",
+                           rclcpp::Time(msg->header.stamp).nanoseconds());
+              return;
+            }
+            PublishOrSaveDeskewedPointCloud(deskewed_cloud, msg->header);
+            AccumulatePointCloudBack<PointXYZIT>(
+                deskewed_cloud, annotation_status_.queue_deskewed,
+                msg->header);
           }
         },
         options);
@@ -596,6 +867,23 @@ void GenPromptPoint::HandleLeftImageMsg(
     pcl::PointCloud<PointXYZIT>::Ptr cloud_in_lidar_raw(
         new pcl::PointCloud<PointXYZIT>);
     int64_t img_time_ns = rclcpp::Time(msg->header.stamp).nanoseconds();
+    bool has_cached_cloud = false;
+    int64_t latest_cloud_ts_ns = 0;
+    double cache_lag_ms = 0.0;
+    {
+      std::lock_guard<std::mutex> lock(locks_.mutex_cache_cloud);
+      has_cached_cloud = annotation_status_.latest_accumulated_cloud != nullptr;
+      if (has_cached_cloud) {
+        latest_cloud_ts_ns =
+            annotation_status_.latest_cloud_timestamp.nanoseconds();
+        cache_lag_ms = (img_time_ns - latest_cloud_ts_ns) / 1e6;
+      }
+    }
+    THROTTLEINFO(
+        1,
+        "Image sync precheck. img_time_ns={} has_cached_cloud={} "
+        "latest_cloud_ts_ns={} cache_lag_ms={:.3f}",
+        img_time_ns, has_cached_cloud, latest_cloud_ts_ns, cache_lag_ms);
     if (!WaitForSyncedPointCloud(img_time_ns, cloud_in_lidar_raw)) return;
 
     rclcpp::Time img_time = msg->header.stamp;
@@ -1205,6 +1493,50 @@ void GenPromptPoint::LeftIntrinsicsCallback(
   print_matrix_as_numpy(msg->data, rows, cols);
 }
 
+void GenPromptPoint::InsOdomCallback(
+    const nav_msgs::msg::Odometry::SharedPtr msg) {
+  if (!msg) {
+    return;
+  }
+
+  const int64_t pose_time_ns = rclcpp::Time(msg->header.stamp).nanoseconds();
+  Eigen::Isometry3d ins_pose = Eigen::Isometry3d::Identity();
+  ins_pose.translation() =
+      Eigen::Vector3d(msg->pose.pose.position.x, msg->pose.pose.position.y,
+                      msg->pose.pose.position.z);
+
+  Eigen::Quaterniond q(msg->pose.pose.orientation.w,
+                       msg->pose.pose.orientation.x,
+                       msg->pose.pose.orientation.y,
+                       msg->pose.pose.orientation.z);
+  if (q.norm() < 1e-6) {
+    THROTTLEWARN(2, "Received invalid INS odom quaternion at {}.",
+                 pose_time_ns);
+    return;
+  }
+  q.normalize();
+  ins_pose.linear() = q.toRotationMatrix();
+
+  {
+    std::lock_guard<std::mutex> lock(locks_.mutex_pose_cache);
+    if (!annotation_status_.ins_pose_cache.empty() &&
+        pose_time_ns < annotation_status_.ins_pose_cache.back().time_ns) {
+      auto insert_pos = std::upper_bound(
+          annotation_status_.ins_pose_cache.begin(),
+          annotation_status_.ins_pose_cache.end(), pose_time_ns,
+          [](int64_t target_time_ns,
+             const AutoAnnotationStatus::TimedPoseSample& sample) {
+            return target_time_ns < sample.time_ns;
+          });
+      annotation_status_.ins_pose_cache.insert(insert_pos,
+                                               {pose_time_ns, ins_pose});
+    } else {
+      annotation_status_.ins_pose_cache.push_back({pose_time_ns, ins_pose});
+    }
+    PrunePoseCacheLocked(pose_time_ns);
+  }
+}
+
 void GenPromptPoint::RightIntrinsicsCallback(
     const std_msgs::msg::Float64MultiArray::SharedPtr msg) {
   // 1. 检查数据是否为空
@@ -1690,7 +2022,28 @@ bool GenPromptPoint::WaitForSyncedPointCloud(
     std::this_thread::sleep_for(std::chrono::milliseconds(sleep_ms));
   }
 
-  WARN("Time sync timeout. Target: {}", target_time_ns);
+  bool has_cloud = false;
+  int64_t latest_cloud_ts_ns = 0;
+  uint64_t latest_cloud_header_us = 0;
+  size_t latest_cloud_size = 0;
+  {
+    std::lock_guard<std::mutex> lock(locks_.mutex_cache_cloud);
+    if (annotation_status_.latest_accumulated_cloud) {
+      has_cloud = true;
+      latest_cloud_ts_ns = annotation_status_.latest_cloud_timestamp.nanoseconds();
+      latest_cloud_header_us =
+          annotation_status_.latest_accumulated_cloud->header.stamp;
+      latest_cloud_size = annotation_status_.latest_accumulated_cloud->size();
+    }
+  }
+  const double diff_ms =
+      has_cloud ? std::abs(target_time_ns - latest_cloud_ts_ns) / 1e6 : -1.0;
+  WARN(
+      "Time sync timeout. target_time_ns={} has_cloud={} latest_cloud_ts_ns={} "
+      "diff_ms={:.3f} retry_count={} latest_cloud_header_us={} "
+      "latest_cloud_size={}",
+      target_time_ns, has_cloud, latest_cloud_ts_ns, diff_ms, max_retry_count,
+      latest_cloud_header_us, latest_cloud_size);
   return false;
 }
 
@@ -1908,6 +2261,912 @@ bool GenPromptPoint::GetTimeInterpolatedTransform(
          ex.what());
     out_tf_mat = fallback_extrinsic.matrix().cast<float>();
     return false;
+  }
+}
+
+pcl::PointCloud<PointXYZIT>::Ptr
+GenPromptPoint::DeskewOriginalPointCloudToPointXYZIT(
+    const pcl::PointCloud<LivoxPoint>::Ptr& input_cloud,
+    const std_msgs::msg::Header& header) {
+  auto deskew_begin_time = std::chrono::high_resolution_clock::now();
+  if (!input_cloud || input_cloud->empty()) {
+    return nullptr;
+  }
+
+  pcl::PointCloud<PointXYZIT>::Ptr output_cloud(
+      new pcl::PointCloud<PointXYZIT>());
+  output_cloud->reserve(input_cloud->size());
+
+  uint32_t max_raw_timestamp = 0;
+  for (const auto& pt : input_cloud->points) {
+    max_raw_timestamp = std::max(max_raw_timestamp, pt.timestamp);
+  }
+
+  if (max_raw_timestamp == 0) {
+    THROTTLEWARN(5,
+                 "Raw deskew is enabled but all Livox timestamps are zero at "
+                 "{}. Forwarding frame without deskew.",
+                 rclcpp::Time(header.stamp).nanoseconds());
+    for (const auto& pt : input_cloud->points) {
+      PointXYZIT out_pt;
+      out_pt.x = pt.x;
+      out_pt.y = pt.y;
+      out_pt.z = pt.z;
+      out_pt.intensity = pt.intensity;
+      out_pt.timestamp = 0.0f;
+      output_cloud->push_back(out_pt);
+    }
+    output_cloud->header.stamp =
+        rclcpp::Time(header.stamp).nanoseconds() / 1000;
+    output_cloud->header.frame_id = header.frame_id;
+    output_cloud->width = static_cast<uint32_t>(output_cloud->size());
+    output_cloud->height = 1;
+    output_cloud->is_dense = false;
+    return output_cloud;
+  }
+
+  const int64_t header_stamp_ns = rclcpp::Time(header.stamp).nanoseconds();
+  int64_t scan_start_time_ns = header_stamp_ns;
+  int64_t scan_end_time_ns = header_stamp_ns;
+  const int64_t max_offset_ns = static_cast<int64_t>(std::llround(
+      static_cast<double>(max_raw_timestamp) *
+      node_config_.raw_deskew_timestamp_unit_sec * 1e9));
+  if (node_config_.raw_deskew_timestamp_polarity ==
+      RawDeskewTimestampPolarity::FromScanStart) {
+    scan_end_time_ns = header_stamp_ns + max_offset_ns;
+  } else {
+    scan_start_time_ns = header_stamp_ns - max_offset_ns;
+  }
+  const int64_t reference_time_ns = ResolveDeskewReferenceTimeNs(
+      header_stamp_ns, scan_start_time_ns, scan_end_time_ns);
+  THROTTLEINFO(
+      1,
+      "Deskew window snapshot. mode={} header_ns={} frame_id={} max_raw_ts={} "
+      "unit_sec={:.9f} polarity={} ref_mode={} scan_start_ns={} "
+      "scan_end_ns={} reference_time_ns={}",
+      RawDeskewModeToString(node_config_.raw_deskew_mode), header_stamp_ns,
+      header.frame_id, max_raw_timestamp, node_config_.raw_deskew_timestamp_unit_sec,
+      RawDeskewTimestampPolarityToString(
+          node_config_.raw_deskew_timestamp_polarity),
+      RawDeskewReferenceTimeToString(
+          node_config_.raw_deskew_reference_time),
+      scan_start_time_ns, scan_end_time_ns, reference_time_ns);
+
+  if (scan_start_time_ns == scan_end_time_ns) {
+    for (const auto& pt : input_cloud->points) {
+      PointXYZIT out_pt;
+      out_pt.x = pt.x;
+      out_pt.y = pt.y;
+      out_pt.z = pt.z;
+      out_pt.intensity = pt.intensity;
+      out_pt.timestamp = 0.0f;
+      output_cloud->push_back(out_pt);
+    }
+    output_cloud->header.stamp =
+        rclcpp::Time(header.stamp).nanoseconds() / 1000;
+    output_cloud->header.frame_id = header.frame_id;
+    output_cloud->width = static_cast<uint32_t>(output_cloud->size());
+    output_cloud->height = 1;
+    output_cloud->is_dense = false;
+    return output_cloud;
+  }
+
+  const std::string fixed_frame = node_config_.raw_deskew_fixed_frame;
+  const std::string sensor_frame = header.frame_id;
+  const std::string ins_frame = ConstValue::kInsLink;
+  Eigen::Isometry3d reference_pose = Eigen::Isometry3d::Identity();
+  if (!LookupDeskewPoseAtTime(fixed_frame, sensor_frame, ins_frame,
+                              rclcpp::Time(reference_time_ns),
+                              reference_pose)) {
+    WARN(
+        "Deskew skipped because reference pose lookup failed. mode={} "
+        "header_ns={} reference_time_ns={} scan_start_ns={} scan_end_ns={}",
+        RawDeskewModeToString(node_config_.raw_deskew_mode), header_stamp_ns,
+        reference_time_ns, scan_start_time_ns, scan_end_time_ns);
+    return nullptr;
+  }
+
+  size_t valid_points = 0;
+  DeskewPoseLookupStats pose_stats;
+  bool deskew_success = false;
+  const char* effective_path = RawDeskewModeToString(node_config_.raw_deskew_mode);
+
+  if (node_config_.raw_deskew_mode == RawDeskewMode::Fast) {
+    deskew_success =
+        RunFastDeskew(input_cloud, header, max_raw_timestamp, reference_pose,
+                      scan_start_time_ns, scan_end_time_ns, output_cloud,
+                      valid_points, &pose_stats);
+  } else {
+    const size_t sample_count = static_cast<size_t>(
+        std::max<int64_t>(2, node_config_.raw_deskew_bucket_count_accurate));
+    std::vector<DeskewPoseSample> trajectory_samples;
+    int64_t sampled_reference_time_ns = 0;
+    int64_t sampled_scan_start_ns = 0;
+    int64_t sampled_scan_end_ns = 0;
+    if (SampleDeskewTrajectory(header, max_raw_timestamp, sample_count,
+                               trajectory_samples, sampled_reference_time_ns,
+                               sampled_scan_start_ns, sampled_scan_end_ns,
+                               &pose_stats)) {
+      Eigen::Isometry3d sampled_reference_pose = reference_pose;
+      if (InterpolatePoseAtTime(trajectory_samples, sampled_reference_time_ns,
+                                sampled_reference_pose)) {
+        pose_stats.cache_hit_count = trajectory_samples.size();
+        for (const auto& pt : input_cloud->points) {
+          const int64_t point_time_ns =
+              ComputePointAbsoluteTimeNs(pt.timestamp, header, max_raw_timestamp);
+          Eigen::Isometry3d point_pose = Eigen::Isometry3d::Identity();
+          if (!InterpolatePoseAtTime(trajectory_samples, point_time_ns,
+                                     point_pose)) {
+            continue;
+          }
+
+          Eigen::Vector3d point_local(pt.x, pt.y, pt.z);
+          Eigen::Vector3d point_ref =
+              sampled_reference_pose.inverse() * point_pose * point_local;
+          PointXYZIT out_pt;
+          out_pt.x = static_cast<float>(point_ref.x());
+          out_pt.y = static_cast<float>(point_ref.y());
+          out_pt.z = static_cast<float>(point_ref.z());
+          out_pt.intensity = pt.intensity;
+          out_pt.timestamp = 0.0f;
+          output_cloud->push_back(out_pt);
+          ++valid_points;
+        }
+        deskew_success = true;
+      } else {
+        WARN(
+            "Deskew skipped because reference pose interpolation failed. "
+            "header_ns={} reference_time_ns={} sample_count={}",
+            header_stamp_ns, sampled_reference_time_ns,
+            trajectory_samples.size());
+      }
+    } else {
+      WARN(
+          "Deskew trajectory sampling failed. header_ns={} sample_count={} "
+          "scan_start_ns={} scan_end_ns={} reference_time_ns={} "
+          "pose_source={} missing_pose_policy={} failure_reason={} "
+          "cache_oldest_ns={} cache_newest_ns={} cache_wait_ms={}",
+          header_stamp_ns, sample_count, sampled_scan_start_ns,
+          sampled_scan_end_ns, sampled_reference_time_ns,
+          RawDeskewPoseSourceToString(node_config_.raw_deskew_pose_source),
+          RawDeskewMissingPosePolicyToString(
+              node_config_.raw_deskew_missing_pose_policy),
+          pose_stats.failure_reason, pose_stats.cache_oldest_time_ns,
+          pose_stats.cache_newest_time_ns, pose_stats.cache_wait_ms);
+    }
+
+    if (!deskew_success &&
+        node_config_.raw_deskew_missing_pose_policy ==
+            RawDeskewMissingPosePolicy::FallbackFast) {
+      pose_stats.fallback_fast = true;
+      effective_path = "fallback_fast";
+      THROTTLEWARN(
+          1,
+          "Accurate deskew falling back to fast. header_ns={} pose_source={} "
+          "cache_sample_count={} cache_hit_count={} failure_reason={} "
+          "cache_oldest_ns={} cache_newest_ns={} cache_wait_ms={}",
+          header_stamp_ns,
+          RawDeskewPoseSourceToString(node_config_.raw_deskew_pose_source),
+          pose_stats.cache_sample_count, pose_stats.cache_hit_count,
+          pose_stats.failure_reason, pose_stats.cache_oldest_time_ns,
+          pose_stats.cache_newest_time_ns, pose_stats.cache_wait_ms);
+      deskew_success =
+          RunFastDeskew(input_cloud, header, max_raw_timestamp, reference_pose,
+                        scan_start_time_ns, scan_end_time_ns, output_cloud,
+                        valid_points, &pose_stats);
+    }
+  }
+
+  if (!deskew_success) {
+    return nullptr;
+  }
+
+  const double valid_point_ratio =
+      static_cast<double>(valid_points) /
+      static_cast<double>(input_cloud->size());
+  if (valid_point_ratio < node_config_.raw_deskew_min_valid_ratio) {
+    WARN(
+        "Deskew skipped because valid point ratio is too low. header_ns={} "
+        "valid_points={} total_points={} ratio={:.3f} threshold={:.3f}",
+        header_stamp_ns, valid_points, input_cloud->size(), valid_point_ratio,
+        node_config_.raw_deskew_min_valid_ratio);
+    return nullptr;
+  }
+
+  output_cloud->header.stamp = header_stamp_ns / 1000;
+  output_cloud->header.frame_id = header.frame_id;
+  output_cloud->width = static_cast<uint32_t>(output_cloud->size());
+  output_cloud->height = 1;
+  output_cloud->is_dense = false;
+  const double deskew_cost_ms =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          std::chrono::high_resolution_clock::now() - deskew_begin_time)
+          .count() /
+      1000.0;
+  THROTTLEINFO(
+      1,
+      "Deskew success snapshot. header_ns={} mode={} effective_path={} "
+      "input_points={} valid_points={} valid_ratio={:.3f} "
+      "pose_source={} cache_sample_count={} cache_hit_count={} "
+      "cache_snapshot_size={} cache_wait_ms={} failure_reason={} "
+      "fallback_fast={} cost_ms={:.2f} output_header_us={}",
+      header_stamp_ns, RawDeskewModeToString(node_config_.raw_deskew_mode),
+      effective_path, input_cloud->size(), valid_points, valid_point_ratio,
+      RawDeskewPoseSourceToString(node_config_.raw_deskew_pose_source),
+      pose_stats.cache_sample_count, pose_stats.cache_hit_count,
+      pose_stats.cache_snapshot_size, pose_stats.cache_wait_ms,
+      pose_stats.failure_reason, pose_stats.fallback_fast, deskew_cost_ms,
+      output_cloud->header.stamp);
+  return output_cloud;
+}
+
+bool GenPromptPoint::LookupDeskewPoseAtTime(const std::string& fixed_frame,
+                                            const std::string& sensor_frame,
+                                            const std::string& ins_frame,
+                                            const rclcpp::Time& query_time,
+                                            Eigen::Isometry3d& out_pose) {
+  if (node_config_.raw_deskew_pose_source == RawDeskewPoseSource::InsOdom &&
+      LookupDeskewPoseFromCacheAtTime(query_time.nanoseconds(), out_pose)) {
+    return true;
+  }
+  if (!tf_buffer_) {
+    return false;
+  }
+
+  try {
+    geometry_msgs::msg::TransformStamped tf_msg = tf_buffer_->lookupTransform(
+        fixed_frame, sensor_frame, query_time,
+        rclcpp::Duration::from_seconds(0.02));
+    out_pose = tf2::transformToEigen(tf_msg);
+    return true;
+  } catch (const tf2::TransformException&) {
+    try {
+      geometry_msgs::msg::TransformStamped tf_ins_msg =
+          tf_buffer_->lookupTransform(fixed_frame, ins_frame, query_time,
+                                      rclcpp::Duration::from_seconds(0.05));
+      Eigen::Isometry3d iso_ins_to_map = tf2::transformToEigen(tf_ins_msg);
+      out_pose = iso_ins_to_map * annotation_status_.isometry_lidar2ins;
+      THROTTLEWARN(5,
+                   "Deskew direct TF {}->{} failed at {}. Using "
+                   "Map->InsLink(dynamic) * Lidar->InsLink(static/default).",
+                   sensor_frame, fixed_frame, query_time.nanoseconds());
+      return true;
+    } catch (const tf2::TransformException& ex2) {
+      THROTTLEWARN(5, "Deskew pose lookup failed at {}: {}",
+                   query_time.nanoseconds(), ex2.what());
+      return false;
+    }
+  }
+}
+
+bool GenPromptPoint::LookupDeskewPoseFromCacheAtTime(
+    int64_t query_time_ns, Eigen::Isometry3d& out_pose) {
+  std::vector<DeskewPoseSample> samples;
+  samples.reserve(2);
+  {
+    std::lock_guard<std::mutex> lock(locks_.mutex_pose_cache);
+    if (annotation_status_.ins_pose_cache.empty()) {
+      return false;
+    }
+    auto upper = std::lower_bound(
+        annotation_status_.ins_pose_cache.begin(),
+        annotation_status_.ins_pose_cache.end(), query_time_ns,
+        [](const AutoAnnotationStatus::TimedPoseSample& sample,
+           int64_t target_time_ns) { return sample.time_ns < target_time_ns; });
+    if (upper == annotation_status_.ins_pose_cache.begin()) {
+      if (upper == annotation_status_.ins_pose_cache.end() ||
+          upper->time_ns != query_time_ns) {
+        return false;
+      }
+      samples.push_back({upper->time_ns, upper->pose});
+    } else if (upper == annotation_status_.ins_pose_cache.end()) {
+      const auto& last = annotation_status_.ins_pose_cache.back();
+      if (last.time_ns != query_time_ns) {
+        return false;
+      }
+      samples.push_back({last.time_ns, last.pose});
+    } else {
+      if (upper->time_ns == query_time_ns) {
+        samples.push_back({upper->time_ns, upper->pose});
+      } else {
+        const auto& left = *(upper - 1);
+        const auto& right = *upper;
+        if (query_time_ns < left.time_ns || query_time_ns > right.time_ns) {
+          return false;
+        }
+        samples.push_back({left.time_ns, left.pose});
+        samples.push_back({right.time_ns, right.pose});
+      }
+    }
+  }
+
+  Eigen::Isometry3d ins_pose = Eigen::Isometry3d::Identity();
+  if (!InterpolatePoseAtTime(samples, query_time_ns, ins_pose)) {
+    return false;
+  }
+  out_pose = ins_pose * annotation_status_.isometry_lidar2ins;
+  return true;
+}
+
+bool GenPromptPoint::GetPoseCacheCoverageSnapshot(
+    int64_t& out_oldest_time_ns, int64_t& out_newest_time_ns) const {
+  std::lock_guard<std::mutex> lock(locks_.mutex_pose_cache);
+  if (annotation_status_.ins_pose_cache.empty()) {
+    out_oldest_time_ns = 0;
+    out_newest_time_ns = 0;
+    return false;
+  }
+  out_oldest_time_ns = annotation_status_.ins_pose_cache.front().time_ns;
+  out_newest_time_ns = annotation_status_.ins_pose_cache.back().time_ns;
+  return true;
+}
+
+bool GenPromptPoint::WaitForPoseCacheCoverage(
+    int64_t scan_start_time_ns, int64_t scan_end_time_ns, int64_t timeout_ms,
+    int64_t poll_interval_ms, int64_t& out_waited_ms,
+    int64_t& out_oldest_time_ns, int64_t& out_newest_time_ns) const {
+  out_waited_ms = 0;
+  while (out_waited_ms <= timeout_ms) {
+    if (!GetPoseCacheCoverageSnapshot(out_oldest_time_ns, out_newest_time_ns)) {
+      if (out_waited_ms == timeout_ms) {
+        return false;
+      }
+    } else if (out_oldest_time_ns <= scan_start_time_ns &&
+               out_newest_time_ns >= scan_end_time_ns) {
+      return true;
+    } else if (out_oldest_time_ns > scan_start_time_ns) {
+      return false;
+    }
+
+    if (out_waited_ms == timeout_ms) {
+      return false;
+    }
+    std::this_thread::sleep_for(
+        std::chrono::milliseconds(poll_interval_ms));
+    out_waited_ms = std::min(timeout_ms, out_waited_ms + poll_interval_ms);
+  }
+  return false;
+}
+
+bool GenPromptPoint::CopyPoseCacheWindowSnapshot(
+    int64_t scan_start_time_ns, int64_t scan_end_time_ns,
+    std::vector<DeskewPoseSample>& out_snapshot,
+    int64_t& out_oldest_time_ns, int64_t& out_newest_time_ns) const {
+  out_snapshot.clear();
+  std::lock_guard<std::mutex> lock(locks_.mutex_pose_cache);
+  if (annotation_status_.ins_pose_cache.empty()) {
+    out_oldest_time_ns = 0;
+    out_newest_time_ns = 0;
+    return false;
+  }
+
+  out_oldest_time_ns = annotation_status_.ins_pose_cache.front().time_ns;
+  out_newest_time_ns = annotation_status_.ins_pose_cache.back().time_ns;
+  if (out_oldest_time_ns > scan_start_time_ns ||
+      out_newest_time_ns < scan_end_time_ns) {
+    return false;
+  }
+
+  auto begin = std::lower_bound(
+      annotation_status_.ins_pose_cache.begin(),
+      annotation_status_.ins_pose_cache.end(), scan_start_time_ns,
+      [](const AutoAnnotationStatus::TimedPoseSample& sample,
+         int64_t target_time_ns) { return sample.time_ns < target_time_ns; });
+  if (begin != annotation_status_.ins_pose_cache.begin()) {
+    --begin;
+  }
+
+  auto end = std::lower_bound(
+      annotation_status_.ins_pose_cache.begin(),
+      annotation_status_.ins_pose_cache.end(), scan_end_time_ns,
+      [](const AutoAnnotationStatus::TimedPoseSample& sample,
+         int64_t target_time_ns) { return sample.time_ns < target_time_ns; });
+  if (end == annotation_status_.ins_pose_cache.end()) {
+    return false;
+  }
+  ++end;
+
+  out_snapshot.reserve(static_cast<size_t>(std::distance(begin, end)));
+  for (auto it = begin; it != end; ++it) {
+    out_snapshot.push_back({it->time_ns, it->pose});
+  }
+  return !out_snapshot.empty();
+}
+
+void GenPromptPoint::PrunePoseCacheLocked(int64_t latest_time_ns) {
+  const int64_t cache_duration_ns = static_cast<int64_t>(
+      std::llround(node_config_.raw_deskew_pose_cache_duration_sec * 1e9));
+  const int64_t keep_after_ns = latest_time_ns - cache_duration_ns;
+  while (!annotation_status_.ins_pose_cache.empty() &&
+         annotation_status_.ins_pose_cache.front().time_ns < keep_after_ns) {
+    annotation_status_.ins_pose_cache.pop_front();
+  }
+}
+
+bool GenPromptPoint::UsePoseCacheForAccurateDeskew() const {
+  return node_config_.raw_deskew_pose_source == RawDeskewPoseSource::InsOdom;
+}
+
+bool GenPromptPoint::RunFastDeskew(
+    const pcl::PointCloud<LivoxPoint>::Ptr& input_cloud,
+    const std_msgs::msg::Header& header, uint32_t max_raw_timestamp,
+    const Eigen::Isometry3d& reference_pose, int64_t scan_start_time_ns,
+    int64_t scan_end_time_ns, pcl::PointCloud<PointXYZIT>::Ptr& output_cloud,
+    size_t& out_valid_points, DeskewPoseLookupStats* out_stats) {
+  if (!input_cloud || !output_cloud) {
+    return false;
+  }
+  const std::string fixed_frame = node_config_.raw_deskew_fixed_frame;
+  const std::string sensor_frame = header.frame_id;
+  const std::string ins_frame = ConstValue::kInsLink;
+  const size_t bucket_count = static_cast<size_t>(
+      std::max<int64_t>(1, node_config_.raw_deskew_bucket_count_fast));
+  std::vector<DeskewPoseSample> bucket_samples;
+  std::vector<bool> bucket_valid(bucket_count, false);
+  bucket_samples.reserve(bucket_count);
+  size_t success_samples = 0;
+
+  for (size_t i = 0; i < bucket_count; ++i) {
+    double alpha =
+        (static_cast<double>(i) + 0.5) / static_cast<double>(bucket_count);
+    int64_t sample_time_ns =
+        scan_start_time_ns +
+        static_cast<int64_t>((scan_end_time_ns - scan_start_time_ns) * alpha);
+    Eigen::Isometry3d sample_pose = Eigen::Isometry3d::Identity();
+    if (LookupDeskewPoseAtTime(fixed_frame, sensor_frame, ins_frame,
+                               rclcpp::Time(sample_time_ns), sample_pose)) {
+      bucket_samples.push_back({sample_time_ns, sample_pose});
+      bucket_valid[i] = true;
+      ++success_samples;
+    } else {
+      bucket_samples.push_back(
+          {sample_time_ns, Eigen::Isometry3d::Identity()});
+    }
+  }
+
+  if (out_stats) {
+    out_stats->cache_sample_count = bucket_count;
+    out_stats->cache_hit_count = success_samples;
+  }
+
+  const double sample_valid_ratio =
+      bucket_count == 0
+          ? 0.0
+          : static_cast<double>(success_samples) /
+                static_cast<double>(bucket_count);
+  if (sample_valid_ratio < node_config_.raw_deskew_min_valid_ratio) {
+    WARN(
+        "Deskew skipped because bucket pose valid ratio is too low. "
+        "header_ns={} ratio={:.3f} threshold={:.3f} bucket_count={} "
+        "scan_start_ns={} scan_end_ns={} reference_time_ns={}",
+        rclcpp::Time(header.stamp).nanoseconds(), sample_valid_ratio,
+        node_config_.raw_deskew_min_valid_ratio, bucket_count,
+        scan_start_time_ns, scan_end_time_ns,
+        ResolveDeskewReferenceTimeNs(rclcpp::Time(header.stamp).nanoseconds(),
+                                     scan_start_time_ns, scan_end_time_ns));
+    return false;
+  }
+
+  for (const auto& pt : input_cloud->points) {
+    const int64_t point_time_ns =
+        ComputePointAbsoluteTimeNs(pt.timestamp, header, max_raw_timestamp);
+    double normalized =
+        static_cast<double>(point_time_ns - scan_start_time_ns) /
+        static_cast<double>(scan_end_time_ns - scan_start_time_ns);
+    normalized = std::clamp(normalized, 0.0, 0.999999);
+    const size_t bucket_idx = std::min(
+        bucket_count - 1,
+        static_cast<size_t>(normalized * static_cast<double>(bucket_count)));
+    if (!bucket_valid[bucket_idx]) {
+      continue;
+    }
+    const auto& bucket_sample = bucket_samples[bucket_idx];
+
+    Eigen::Vector3d point_local(pt.x, pt.y, pt.z);
+    Eigen::Vector3d point_ref =
+        reference_pose.inverse() * bucket_sample.pose * point_local;
+    PointXYZIT out_pt;
+    out_pt.x = static_cast<float>(point_ref.x());
+    out_pt.y = static_cast<float>(point_ref.y());
+    out_pt.z = static_cast<float>(point_ref.z());
+    out_pt.intensity = pt.intensity;
+    out_pt.timestamp = 0.0f;
+    output_cloud->push_back(out_pt);
+    ++out_valid_points;
+  }
+  return true;
+}
+
+bool GenPromptPoint::SampleDeskewTrajectory(
+    const std_msgs::msg::Header& header, uint32_t max_raw_timestamp,
+    size_t sample_count, std::vector<DeskewPoseSample>& out_samples,
+    int64_t& out_reference_time_ns, int64_t& out_scan_start_time_ns,
+    int64_t& out_scan_end_time_ns, DeskewPoseLookupStats* out_stats) {
+  out_samples.clear();
+  if (sample_count == 0) {
+    return false;
+  }
+
+  const int64_t header_stamp_ns = rclcpp::Time(header.stamp).nanoseconds();
+  const int64_t max_offset_ns = static_cast<int64_t>(std::llround(
+      static_cast<double>(max_raw_timestamp) *
+      node_config_.raw_deskew_timestamp_unit_sec * 1e9));
+
+  if (node_config_.raw_deskew_timestamp_polarity ==
+      RawDeskewTimestampPolarity::FromScanStart) {
+    out_scan_start_time_ns = header_stamp_ns;
+    out_scan_end_time_ns = header_stamp_ns + max_offset_ns;
+  } else {
+    out_scan_end_time_ns = header_stamp_ns;
+    out_scan_start_time_ns = header_stamp_ns - max_offset_ns;
+  }
+  out_reference_time_ns = ResolveDeskewReferenceTimeNs(
+      header_stamp_ns, out_scan_start_time_ns, out_scan_end_time_ns);
+
+  if (out_stats) {
+    out_stats->cache_sample_count = sample_count;
+    out_stats->cache_hit_count = 0;
+    out_stats->used_pose_cache = UsePoseCacheForAccurateDeskew();
+  }
+
+  if (UsePoseCacheForAccurateDeskew()) {
+    int64_t waited_ms = 0;
+    int64_t oldest_time_ns = 0;
+    int64_t newest_time_ns = 0;
+    if (out_stats) {
+      out_stats->failure_reason = "none";
+    }
+    const bool has_coverage = WaitForPoseCacheCoverage(
+        out_scan_start_time_ns, out_scan_end_time_ns,
+        kPoseCacheCoverageWaitTimeoutMs, kPoseCacheCoveragePollIntervalMs,
+        waited_ms, oldest_time_ns, newest_time_ns);
+    if (out_stats) {
+      out_stats->cache_wait_ms = waited_ms;
+      out_stats->cache_oldest_time_ns = oldest_time_ns;
+      out_stats->cache_newest_time_ns = newest_time_ns;
+    }
+    if (!has_coverage) {
+      std::string reason = "cache_empty";
+      if (oldest_time_ns != 0 || newest_time_ns != 0) {
+        if (oldest_time_ns > out_scan_start_time_ns) {
+          reason = "cache_before_scan_start";
+        } else if (newest_time_ns < out_scan_end_time_ns) {
+          reason = "cache_behind_scan_end";
+        }
+      }
+      if (out_stats) {
+        out_stats->failure_reason = reason;
+      }
+      WARN(
+          "Deskew pose cache coverage wait failed. header_ns={} "
+          "reason={} waited_ms={} cache_oldest_ns={} cache_newest_ns={} "
+          "scan_start_ns={} scan_end_ns={} reference_time_ns={}",
+          header_stamp_ns, reason, waited_ms, oldest_time_ns, newest_time_ns,
+          out_scan_start_time_ns, out_scan_end_time_ns, out_reference_time_ns);
+      return false;
+    }
+
+    std::vector<DeskewPoseSample> cache_snapshot;
+    if (!CopyPoseCacheWindowSnapshot(out_scan_start_time_ns, out_scan_end_time_ns,
+                                     cache_snapshot, oldest_time_ns,
+                                     newest_time_ns)) {
+      if (out_stats) {
+        out_stats->failure_reason = "coverage_gap_inside_window";
+      }
+      WARN(
+          "Deskew pose cache snapshot failed. header_ns={} "
+          "reason=coverage_gap_inside_window cache_oldest_ns={} "
+          "cache_newest_ns={} scan_start_ns={} scan_end_ns={} "
+          "reference_time_ns={}",
+          header_stamp_ns, oldest_time_ns, newest_time_ns,
+          out_scan_start_time_ns, out_scan_end_time_ns, out_reference_time_ns);
+      return false;
+    }
+
+    if (out_stats) {
+      out_stats->cache_snapshot_size = cache_snapshot.size();
+      out_stats->cache_oldest_time_ns = oldest_time_ns;
+      out_stats->cache_newest_time_ns = newest_time_ns;
+    }
+
+    Eigen::Isometry3d reference_pose = Eigen::Isometry3d::Identity();
+    if (!InterpolatePoseAtTime(cache_snapshot, out_reference_time_ns,
+                               reference_pose)) {
+      if (out_stats) {
+        out_stats->failure_reason = "reference_pose_missing";
+      }
+      WARN(
+          "Deskew reference pose interpolation failed. header_ns={} "
+          "reason=reference_pose_missing snapshot_size={} cache_oldest_ns={} "
+          "cache_newest_ns={} reference_time_ns={}",
+          header_stamp_ns, cache_snapshot.size(), oldest_time_ns,
+          newest_time_ns, out_reference_time_ns);
+      return false;
+    }
+
+    out_samples.reserve(sample_count + 1);
+    size_t success_count = 0;
+    for (size_t i = 0; i < sample_count; ++i) {
+      int64_t sample_time_ns = out_reference_time_ns;
+      if (sample_count > 1 && out_scan_start_time_ns != out_scan_end_time_ns) {
+        double alpha = static_cast<double>(i) /
+                       static_cast<double>(sample_count - 1);
+        sample_time_ns =
+            out_scan_start_time_ns +
+            static_cast<int64_t>(
+                (out_scan_end_time_ns - out_scan_start_time_ns) * alpha);
+      }
+      Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
+      if (!InterpolatePoseAtTime(cache_snapshot, sample_time_ns, pose)) {
+        if (out_stats) {
+          out_stats->failure_reason = "coverage_gap_inside_window";
+        }
+        WARN(
+            "Deskew sample interpolation failed. header_ns={} "
+            "reason=coverage_gap_inside_window sample_time_ns={} "
+            "snapshot_size={} cache_oldest_ns={} cache_newest_ns={} "
+            "scan_start_ns={} scan_end_ns={}",
+            header_stamp_ns, sample_time_ns, cache_snapshot.size(),
+            oldest_time_ns, newest_time_ns, out_scan_start_time_ns,
+            out_scan_end_time_ns);
+        return false;
+      }
+      out_samples.push_back({sample_time_ns, pose});
+      ++success_count;
+    }
+
+    bool has_reference_sample = false;
+    for (const auto& sample : out_samples) {
+      if (sample.time_ns == out_reference_time_ns) {
+        has_reference_sample = true;
+        break;
+      }
+    }
+    if (!has_reference_sample) {
+      out_samples.push_back({out_reference_time_ns, reference_pose});
+    }
+
+    std::sort(out_samples.begin(), out_samples.end(),
+              [](const DeskewPoseSample& lhs, const DeskewPoseSample& rhs) {
+                return lhs.time_ns < rhs.time_ns;
+              });
+    out_samples.erase(
+        std::unique(
+            out_samples.begin(), out_samples.end(),
+            [](const DeskewPoseSample& lhs, const DeskewPoseSample& rhs) {
+              return lhs.time_ns == rhs.time_ns;
+            }),
+        out_samples.end());
+
+    if (out_stats) {
+      out_stats->cache_hit_count = out_samples.size();
+    }
+    const double sample_valid_ratio =
+        sample_count == 0
+            ? 0.0
+            : static_cast<double>(success_count) /
+                  static_cast<double>(sample_count);
+    THROTTLEINFO(
+        1,
+        "Deskew sampled trajectory snapshot. header_ns={} pose_source={} "
+        "cache_oldest_ns={} cache_newest_ns={} wait_ms={} "
+        "snapshot_size={} sample_count={} valid_sample_count={} "
+        "sample_valid_ratio={:.3f} scan_start_ns={} scan_end_ns={} "
+        "reference_time_ns={}",
+        header_stamp_ns,
+        RawDeskewPoseSourceToString(node_config_.raw_deskew_pose_source),
+        oldest_time_ns, newest_time_ns, waited_ms, cache_snapshot.size(),
+        sample_count, out_samples.size(), sample_valid_ratio,
+        out_scan_start_time_ns, out_scan_end_time_ns, out_reference_time_ns);
+    if (out_samples.size() < 2 ||
+        sample_valid_ratio < node_config_.raw_deskew_min_valid_ratio) {
+      if (out_stats) {
+        out_stats->failure_reason = "trajectory_interpolation_failed";
+      }
+      WARN(
+          "Deskew sampled trajectory invalid. header_ns={} "
+          "reason=trajectory_interpolation_failed valid_sample_count={} "
+          "sample_valid_ratio={:.3f} threshold={:.3f}",
+          header_stamp_ns, out_samples.size(), sample_valid_ratio,
+          node_config_.raw_deskew_min_valid_ratio);
+      return false;
+    }
+    return true;
+  }
+
+  const std::string fixed_frame = node_config_.raw_deskew_fixed_frame;
+  const std::string sensor_frame = header.frame_id;
+  const std::string ins_frame = ConstValue::kInsLink;
+
+  size_t success_count = 0;
+  size_t attempt_count = 0;
+  out_samples.reserve(sample_count + 1);
+  for (size_t i = 0; i < sample_count; ++i) {
+    int64_t sample_time_ns = out_reference_time_ns;
+    if (sample_count > 1 && out_scan_start_time_ns != out_scan_end_time_ns) {
+      double alpha = static_cast<double>(i) /
+                     static_cast<double>(sample_count - 1);
+      sample_time_ns =
+          out_scan_start_time_ns +
+          static_cast<int64_t>((out_scan_end_time_ns - out_scan_start_time_ns) *
+                               alpha);
+    }
+    Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
+    ++attempt_count;
+    if (LookupDeskewPoseAtTime(fixed_frame, sensor_frame, ins_frame,
+                               rclcpp::Time(sample_time_ns), pose)) {
+      out_samples.push_back({sample_time_ns, pose});
+      ++success_count;
+    }
+  }
+
+  bool has_reference_sample = false;
+  for (const auto& sample : out_samples) {
+    if (sample.time_ns == out_reference_time_ns) {
+      has_reference_sample = true;
+      break;
+    }
+  }
+  if (!has_reference_sample) {
+    Eigen::Isometry3d reference_pose = Eigen::Isometry3d::Identity();
+    ++attempt_count;
+    if (LookupDeskewPoseAtTime(fixed_frame, sensor_frame, ins_frame,
+                               rclcpp::Time(out_reference_time_ns),
+                               reference_pose)) {
+      out_samples.push_back({out_reference_time_ns, reference_pose});
+      ++success_count;
+    }
+  }
+
+  std::sort(out_samples.begin(), out_samples.end(),
+            [](const DeskewPoseSample& lhs, const DeskewPoseSample& rhs) {
+              return lhs.time_ns < rhs.time_ns;
+            });
+  out_samples.erase(
+      std::unique(out_samples.begin(), out_samples.end(),
+                  [](const DeskewPoseSample& lhs, const DeskewPoseSample& rhs) {
+                    return lhs.time_ns == rhs.time_ns;
+                  }),
+      out_samples.end());
+
+  const double sample_valid_ratio =
+      attempt_count == 0
+          ? 0.0
+          : static_cast<double>(success_count) /
+                static_cast<double>(attempt_count);
+  if (out_samples.size() < 2 ||
+      sample_valid_ratio < node_config_.raw_deskew_min_valid_ratio) {
+    WARN("Deskew trajectory sampling at {} only has {} valid samples "
+         "(ratio {:.3f}, threshold {:.3f}).",
+         header_stamp_ns, out_samples.size(), sample_valid_ratio,
+         node_config_.raw_deskew_min_valid_ratio);
+    return false;
+  }
+  if (out_stats) {
+    out_stats->cache_hit_count = out_samples.size();
+  }
+  return true;
+}
+
+bool GenPromptPoint::InterpolatePoseAtTime(
+    const std::vector<DeskewPoseSample>& samples, int64_t query_time_ns,
+    Eigen::Isometry3d& out_pose) const {
+  if (samples.empty()) {
+    return false;
+  }
+  if (samples.size() == 1) {
+    out_pose = samples.front().pose;
+    return true;
+  }
+
+  if (query_time_ns <= samples.front().time_ns) {
+    if (query_time_ns < samples.front().time_ns) {
+      return false;
+    }
+    out_pose = samples.front().pose;
+    return true;
+  }
+  if (query_time_ns >= samples.back().time_ns) {
+    if (query_time_ns > samples.back().time_ns) {
+      return false;
+    }
+    out_pose = samples.back().pose;
+    return true;
+  }
+
+  auto upper = std::lower_bound(
+      samples.begin(), samples.end(), query_time_ns,
+      [](const DeskewPoseSample& sample, int64_t target_time_ns) {
+        return sample.time_ns < target_time_ns;
+      });
+  if (upper == samples.end()) {
+    return false;
+  }
+  if (upper->time_ns == query_time_ns) {
+    out_pose = upper->pose;
+    return true;
+  }
+  if (upper == samples.begin()) {
+    return false;
+  }
+
+  const auto& right = *upper;
+  const auto& left = *(upper - 1);
+  const int64_t duration_ns = right.time_ns - left.time_ns;
+  if (duration_ns <= 0) {
+    return false;
+  }
+
+  const double alpha =
+      static_cast<double>(query_time_ns - left.time_ns) /
+      static_cast<double>(duration_ns);
+  Eigen::Quaterniond left_q(left.pose.rotation());
+  Eigen::Quaterniond right_q(right.pose.rotation());
+  left_q.normalize();
+  right_q.normalize();
+
+  Eigen::Isometry3d interpolated_pose = Eigen::Isometry3d::Identity();
+  interpolated_pose.translation() =
+      (1.0 - alpha) * left.pose.translation() +
+      alpha * right.pose.translation();
+  interpolated_pose.linear() = left_q.slerp(alpha, right_q).toRotationMatrix();
+  out_pose = interpolated_pose;
+  return true;
+}
+
+int64_t GenPromptPoint::ComputePointAbsoluteTimeNs(
+    uint32_t raw_timestamp, const std_msgs::msg::Header& header,
+    uint32_t max_raw_timestamp) const {
+  (void)max_raw_timestamp;
+  const int64_t header_stamp_ns = rclcpp::Time(header.stamp).nanoseconds();
+  const int64_t offset_ns = static_cast<int64_t>(std::llround(
+      static_cast<double>(raw_timestamp) *
+      node_config_.raw_deskew_timestamp_unit_sec * 1e9));
+  if (node_config_.raw_deskew_timestamp_polarity ==
+      RawDeskewTimestampPolarity::FromScanStart) {
+    return header_stamp_ns + offset_ns;
+  }
+  return header_stamp_ns - offset_ns;
+}
+
+int64_t GenPromptPoint::ResolveDeskewReferenceTimeNs(
+    int64_t header_stamp_ns, int64_t scan_start_time_ns,
+    int64_t scan_end_time_ns) const {
+  switch (node_config_.raw_deskew_reference_time) {
+    case RawDeskewReferenceTime::ScanStart:
+      return scan_start_time_ns;
+    case RawDeskewReferenceTime::ScanEnd:
+      return scan_end_time_ns;
+    case RawDeskewReferenceTime::HeaderStamp:
+    default:
+      return header_stamp_ns;
+  }
+}
+
+void GenPromptPoint::PublishOrSaveDeskewedPointCloud(
+    const pcl::PointCloud<PointXYZIT>::Ptr& deskewed_cloud,
+    const std_msgs::msg::Header& header) {
+  if (!deskewed_cloud || deskewed_cloud->empty()) {
+    return;
+  }
+
+  if (raw_deskewed_pc_pub_) {
+    sensor_msgs::msg::PointCloud2 output_msg;
+    pcl::toROSMsg(*deskewed_cloud, output_msg);
+    output_msg.header = header;
+    raw_deskewed_pc_pub_->publish(output_msg);
+  }
+
+  if (node_config_.raw_deskew_save_debug_cloud &&
+      !annotation_status_.raw_deskew_save_folder.empty()) {
+    const int64_t timestamp_ns = rclcpp::Time(header.stamp).nanoseconds();
+    const std::string file_path = annotation_status_.raw_deskew_save_folder +
+                                  "/" + std::to_string(timestamp_ns) + ".pcd";
+    if (pcl::io::savePCDFileBinary(file_path, *deskewed_cloud) == 0) {
+      INFO("Saved raw deskewed PCD: {}", timestamp_ns);
+    } else {
+      WARN("Failed to save raw deskewed PCD: {}", timestamp_ns);
+    }
   }
 }
 
