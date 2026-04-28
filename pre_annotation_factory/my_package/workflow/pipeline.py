@@ -216,6 +216,7 @@ class WorkflowPipeline:
                     "xtreme_upload_dir": str(artifacts["xtreme_upload_dir"]),
                     "xtreme_zip_path": str(artifacts["xtreme_zip_path"]),
                     "raw_archive_dir": str(artifacts["raw_archive_dir"]),
+                    "submit_manifest_path": str(artifacts["submit_manifest_path"]),
                 }
             )
             self._save_state(
@@ -318,6 +319,11 @@ class WorkflowPipeline:
         normalized_export_dir = job_dir / "artifacts" / "xtreme_export" / "normalized"
         final_output_dir = job_dir / "artifacts" / "final_dataset"
         try:
+            submit_manifest_path = state.paths.get("submit_manifest_path")
+            if not submit_manifest_path:
+                raise FileNotFoundError(
+                    f"Missing submit frame manifest in job state: {job_id}"
+                )
             export_serial_number = gateway.request_export(
                 dataset_id=state.xtreme["dataset_id"]
             )
@@ -351,6 +357,7 @@ class WorkflowPipeline:
                 xtreme_export_root=normalized_export_dir,
                 raw_archive_root=Path(state.paths["raw_archive_dir"]),
                 final_kitti_output_dir=final_output_dir,
+                submit_manifest_path=Path(submit_manifest_path),
             )
             state.paths["export_archive_path"] = str(export_archive_path)
             state.paths["normalized_export_dir"] = str(normalized_export_dir)

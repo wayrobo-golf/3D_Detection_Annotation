@@ -1,5 +1,7 @@
 import importlib.util
+import json
 import os
+import shutil
 import sys
 import types
 from pathlib import Path
@@ -38,6 +40,16 @@ def load_annotationctl_module():
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
+
+
+def write_submit_manifest_file(
+    manifest_path: Path, items: list[dict] | None = None
+) -> Path:
+    if items is None:
+        items = [{"scene_name": "Scene_01", "frame_id": "frame_001", "img_ext": ".png"}]
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(json.dumps(items), encoding="utf-8")
+    return manifest_path
 
 
 def test_annotationctl_loads_dotenv_from_repo_root(tmp_path: Path, monkeypatch):
@@ -89,6 +101,48 @@ def test_build_xtreme_upload_bundle_forces_kitti_disabled():
     module.run_xtreme_upload_bundle("/tmp/workspace", "Demo_20260416")
 
     assert called["generate_kitti"] is False
+
+
+def test_write_submit_frame_manifest_records_scene_and_frame(tmp_path):
+    module = load_replay_module()
+    manifest_path = tmp_path / "submit_frames.json"
+    tasks = [
+        (
+            "1773905257000077056",
+            "cfg.json",
+            "label.txt",
+            "pcd.pcd",
+            "img.jpg",
+            "Scene_01",
+            "/tmp/Scene_01",
+        ),
+        (
+            "1773905402200267008",
+            "cfg2.json",
+            "label2.txt",
+            "pcd2.pcd",
+            "img2.png",
+            "Scene_02",
+            "/tmp/Scene_02",
+        ),
+    ]
+
+    result = module.write_submit_frame_manifest(manifest_path, tasks)
+
+    assert result == manifest_path
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert payload == [
+        {
+            "scene_name": "Scene_01",
+            "frame_id": "1773905257000077056",
+            "img_ext": ".jpg",
+        },
+        {
+            "scene_name": "Scene_02",
+            "frame_id": "1773905402200267008",
+            "img_ext": ".png",
+        },
+    ]
 
 
 def test_select_xtreme_upload_tasks_keeps_empty_frames_when_no_positive_frames():
@@ -169,10 +223,14 @@ def test_submit_runs_extract_then_upload_then_waiting_state(
         xtreme_zip.write_bytes(b"zip")
         raw_origin_dir = kwargs["raw_data_archive_dir"] / "origin"
         raw_origin_dir.mkdir(parents=True, exist_ok=True)
+        submit_manifest = write_submit_manifest_file(
+            kwargs["xtreme1_output_dir"] / "submit_frames.json"
+        )
         return {
             "xtreme_zip_path": xtreme_zip,
             "raw_archive_dir": raw_origin_dir,
             "xtreme_upload_dir": kwargs["xtreme1_output_dir"],
+            "submit_manifest_path": submit_manifest,
         }
 
     pipeline = WorkflowPipeline.for_tests(
@@ -187,6 +245,137 @@ def test_submit_runs_extract_then_upload_then_waiting_state(
 
     assert state.status == "waiting_human_annotation"
     assert "dataset_id" in state.xtreme
+
+
+def test_finalize_passes_submit_manifest_path_to_merge(tmp_path: Path, monkeypatch):
+    from my_package.workflow.pipeline import WorkflowPipeline
+
+    manifest_path = tmp_path / "job.yaml"
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    manifest_path.write_text(
+        "\n".join(
+            [
+                "job_name: demo_job",
+                "location: Demo_20260416",
+                "input:",
+                f"  source_dir: {source_dir}",
+                "workspace:",
+                f"  root_dir: {tmp_path / 'workspace'}",
+                "xtreme:",
+                "  base_url: http://127.0.0.1:8190",
+                "  token_env: XTREME1_TOKEN",
+                "  dataset_name: DemoDataset",
+                "  dataset_type: lidar_fusion",
+                "output:",
+                f"  final_dataset_dir: {tmp_path / 'final'}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    manifest = load_job_manifest(manifest_path)
+    monkeypatch.setenv("XTREME1_TOKEN", "token")
+
+    submit_manifest = tmp_path / "job_submit_frames.json"
+    submit_manifest.write_text(
+        json.dumps(
+            [{"scene_name": "Scene_01", "frame_id": "f1", "img_ext": ".png"}]
+        ),
+        encoding="utf-8",
+    )
+    export_archive = tmp_path / "export.zip"
+    export_archive.write_bytes(b"zip")
+    normalized_export_dir = tmp_path / "normalized"
+    normalized_export_dir.mkdir(parents=True, exist_ok=True)
+    captured = {}
+
+    class FakeGateway:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def create_or_get_dataset(self, *_args, **_kwargs):
+            return "dataset-001"
+
+        def request_upload_url(self, *_args, **_kwargs):
+            return ("http://upload.local/file", "http://access.local/file")
+
+        def upload_archive(self, *_args, **_kwargs):
+            return None
+
+        def import_archive(self, *_args, **_kwargs):
+            return "import-001"
+
+        def wait_import_done(self, *_args, **_kwargs):
+            return None
+
+        def request_export(self, dataset_id):
+            assert dataset_id == "dataset-001"
+            return "export-001"
+
+        def wait_export_done(self, export_serial_number):
+            assert export_serial_number == "export-001"
+            return "http://download.local/result.zip"
+
+        def download_export(self, _download_url, archive_path):
+            Path(archive_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(archive_path).write_bytes(export_archive.read_bytes())
+
+        def fetch_annotations_by_data_ids(self, *_args, **_kwargs):
+            return []
+
+    def fake_extract(_source, target, **_kwargs):
+        target.mkdir(parents=True, exist_ok=True)
+        return target
+
+    def fake_run_auto_annotation(_target_path, _location_str, **kwargs):
+        xtreme_zip = kwargs["xtreme1_output_dir"] / "upload.zip"
+        xtreme_zip.parent.mkdir(parents=True, exist_ok=True)
+        xtreme_zip.write_bytes(b"zip")
+        raw_origin_dir = kwargs["raw_data_archive_dir"] / "origin"
+        raw_origin_dir.mkdir(parents=True, exist_ok=True)
+        return {
+            "xtreme_zip_path": xtreme_zip,
+            "raw_archive_dir": raw_origin_dir,
+            "xtreme_upload_dir": kwargs["xtreme1_output_dir"],
+            "submit_manifest_path": submit_manifest,
+        }
+
+    def fake_unpack_archive(_archive_path, target_root):
+        target_root.mkdir(parents=True, exist_ok=True)
+        return target_root
+
+    def fake_normalize(_download_dir, normalized_dir):
+        normalized_dir.mkdir(parents=True, exist_ok=True)
+        return normalized_dir
+
+    def fake_rebuild(_normalized_dir, _fetch_fn):
+        return None
+
+    def fake_merge(_location, **kwargs):
+        captured["submit_manifest_path"] = kwargs["submit_manifest_path"]
+        dataset_root = tmp_path / "final_dataset"
+        dataset_root.mkdir(parents=True, exist_ok=True)
+        zip_path = tmp_path / "final.zip"
+        zip_path.write_bytes(b"zip")
+        return {"dataset_root_dir": dataset_root, "zip_path": zip_path}
+
+    pipeline = WorkflowPipeline.for_tests(
+        tmp_path / "workspace",
+        gateway_factory=FakeGateway,
+        extract_archives_fn=fake_extract,
+        auto_annotation_runner=fake_run_auto_annotation,
+        unpack_archive_fn=fake_unpack_archive,
+        normalize_export_tree_fn=fake_normalize,
+        rebuild_result_tree_fn=fake_rebuild,
+        merge_final_dataset_fn=fake_merge,
+    )
+
+    job_id = pipeline.submit(manifest)
+    shutil.copy2(manifest_path, pipeline.job_store.jobs_root / job_id / "job.yaml")
+    pipeline.finalize(job_id)
+
+    assert Path(captured["submit_manifest_path"]) == submit_manifest
 
 
 def test_submit_wires_adapters_and_gateway(tmp_path: Path, monkeypatch):
@@ -254,10 +443,14 @@ def test_submit_wires_adapters_and_gateway(tmp_path: Path, monkeypatch):
         xtreme_zip.write_bytes(b"zip")
         raw_origin_dir = kwargs["raw_data_archive_dir"] / "origin"
         raw_origin_dir.mkdir(parents=True, exist_ok=True)
+        submit_manifest = write_submit_manifest_file(
+            kwargs["xtreme1_output_dir"] / "submit_frames.json"
+        )
         return {
             "xtreme_zip_path": xtreme_zip,
             "raw_archive_dir": raw_origin_dir,
             "xtreme_upload_dir": kwargs["xtreme1_output_dir"],
+            "submit_manifest_path": submit_manifest,
         }
 
     pipeline = WorkflowPipeline.for_tests(
@@ -348,10 +541,14 @@ def test_submit_uses_original_source_dir_when_extract_output_has_no_bags(
         xtreme_zip.write_bytes(b"zip")
         raw_origin_dir = kwargs["raw_data_archive_dir"] / "origin"
         raw_origin_dir.mkdir(parents=True, exist_ok=True)
+        submit_manifest = write_submit_manifest_file(
+            kwargs["xtreme1_output_dir"] / "submit_frames.json"
+        )
         return {
             "xtreme_zip_path": xtreme_zip,
             "raw_archive_dir": raw_origin_dir,
             "xtreme_upload_dir": kwargs["xtreme1_output_dir"],
+            "submit_manifest_path": submit_manifest,
         }
 
     pipeline = WorkflowPipeline.for_tests(
@@ -455,10 +652,14 @@ def test_submit_generates_job_specific_auto_annotation_yaml(tmp_path: Path, monk
         xtreme_zip.write_bytes(b"zip")
         raw_origin_dir = kwargs["raw_data_archive_dir"] / "origin"
         raw_origin_dir.mkdir(parents=True, exist_ok=True)
+        submit_manifest = write_submit_manifest_file(
+            kwargs["xtreme1_output_dir"] / "submit_frames.json"
+        )
         return {
             "xtreme_zip_path": xtreme_zip,
             "raw_archive_dir": raw_origin_dir,
             "xtreme_upload_dir": kwargs["xtreme1_output_dir"],
+            "submit_manifest_path": submit_manifest,
         }
 
     pipeline = WorkflowPipeline.for_tests(
@@ -579,10 +780,14 @@ def test_submit_passes_manifest_qos_yaml_path_to_auto_annotation_runner(
         xtreme_zip.write_bytes(b"zip")
         raw_origin_dir = kwargs["raw_data_archive_dir"] / "origin"
         raw_origin_dir.mkdir(parents=True, exist_ok=True)
+        submit_manifest = write_submit_manifest_file(
+            kwargs["xtreme1_output_dir"] / "submit_frames.json"
+        )
         return {
             "xtreme_zip_path": xtreme_zip,
             "raw_archive_dir": raw_origin_dir,
             "xtreme_upload_dir": kwargs["xtreme1_output_dir"],
+            "submit_manifest_path": submit_manifest,
         }
 
     pipeline = WorkflowPipeline.for_tests(
@@ -645,10 +850,14 @@ def test_submit_records_failed_state_when_xtreme_request_fails(tmp_path: Path, m
         xtreme_zip.write_bytes(b"zip")
         raw_origin_dir = kwargs["raw_data_archive_dir"] / "origin"
         raw_origin_dir.mkdir(parents=True, exist_ok=True)
+        submit_manifest = write_submit_manifest_file(
+            kwargs["xtreme1_output_dir"] / "submit_frames.json"
+        )
         return {
             "xtreme_zip_path": xtreme_zip,
             "raw_archive_dir": raw_origin_dir,
             "xtreme_upload_dir": kwargs["xtreme1_output_dir"],
+            "submit_manifest_path": submit_manifest,
         }
 
     pipeline = WorkflowPipeline.for_tests(
@@ -891,9 +1100,14 @@ def test_finalize_runs_export_and_merge_to_completed(tmp_path: Path, monkeypatch
     state = pipeline.job_store.load_state(job_id)
     raw_origin_dir = job_dir / "artifacts" / "raw_origin" / "origin"
     raw_origin_dir.mkdir(parents=True, exist_ok=True)
+    submit_manifest = write_submit_manifest_file(
+        job_dir / "artifacts" / "xtreme_upload" / "submit_frames.json",
+        [{"scene_name": "Scene_01", "frame_id": "1772690563879224064", "img_ext": ".png"}],
+    )
     state.xtreme["dataset_id"] = "dataset-001"
     state.last_error = "previous failure"
     state.paths["raw_archive_dir"] = str(raw_origin_dir)
+    state.paths["submit_manifest_path"] = str(submit_manifest)
     pipeline.job_store.save_state(job_id, state)
 
     pipeline.finalize(job_id)
@@ -1009,8 +1223,13 @@ def test_finalize_wires_export_download_and_merge(tmp_path: Path, monkeypatch):
     state = pipeline.job_store.load_state(job_id)
     raw_origin_dir = job_dir / "artifacts" / "raw_origin" / "origin"
     raw_origin_dir.mkdir(parents=True, exist_ok=True)
+    submit_manifest = write_submit_manifest_file(
+        job_dir / "artifacts" / "xtreme_upload" / "submit_frames.json",
+        [{"scene_name": "Scene_01", "frame_id": "1772690563879224064", "img_ext": ".png"}],
+    )
     state.xtreme["dataset_id"] = "dataset-001"
     state.paths["raw_archive_dir"] = str(raw_origin_dir)
+    state.paths["submit_manifest_path"] = str(submit_manifest)
     pipeline.job_store.save_state(job_id, state)
 
     pipeline.finalize(job_id)
@@ -1072,8 +1291,13 @@ def test_finalize_updates_step_before_waiting_for_export(tmp_path: Path, monkeyp
     state = pipeline.job_store.load_state(job_id)
     raw_origin_dir = job_dir / "artifacts" / "raw_origin" / "origin"
     raw_origin_dir.mkdir(parents=True, exist_ok=True)
+    submit_manifest = write_submit_manifest_file(
+        job_dir / "artifacts" / "xtreme_upload" / "submit_frames.json",
+        [{"scene_name": "Scene_01", "frame_id": "frame_001", "img_ext": ".png"}],
+    )
     state.xtreme["dataset_id"] = "dataset-001"
     state.paths["raw_archive_dir"] = str(raw_origin_dir)
+    state.paths["submit_manifest_path"] = str(submit_manifest)
     pipeline.job_store.save_state(job_id, state)
 
     with pytest.raises(RuntimeError, match="export still running"):
@@ -1125,8 +1349,13 @@ def test_finalize_records_failed_state_and_error_message(tmp_path: Path, monkeyp
     state = pipeline.job_store.load_state(job_id)
     raw_origin_dir = job_dir / "artifacts" / "raw_origin" / "origin"
     raw_origin_dir.mkdir(parents=True, exist_ok=True)
+    submit_manifest = write_submit_manifest_file(
+        job_dir / "artifacts" / "xtreme_upload" / "submit_frames.json",
+        [{"scene_name": "Scene_01", "frame_id": "frame_001", "img_ext": ".png"}],
+    )
     state.xtreme["dataset_id"] = "dataset-001"
     state.paths["raw_archive_dir"] = str(raw_origin_dir)
+    state.paths["submit_manifest_path"] = str(submit_manifest)
     pipeline.job_store.save_state(job_id, state)
 
     with pytest.raises(RuntimeError, match="export failed hard"):

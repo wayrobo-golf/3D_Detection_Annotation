@@ -1,4 +1,5 @@
 #include "automatic_annotation/gen_prompt_point.hpp"
+#include "automatic_annotation/image_matching_utils.hpp"
 
 #include <pcl/filters/crop_box.h>
 #include <pcl/io/pcd_io.h>
@@ -18,6 +19,16 @@
 #include <vector>
 namespace automatic_annotation {
 namespace {
+
+const char* CameraRoleToString(CameraRole role) {
+  switch (role) {
+    case CameraRole::Left:
+      return "left";
+    case CameraRole::Right:
+      return "right";
+  }
+  return "unknown";
+}
 
 constexpr int64_t kPoseCacheCoverageWaitTimeoutMs = 30;
 constexpr int64_t kPoseCacheCoveragePollIntervalMs = 1;
@@ -142,6 +153,8 @@ GenPromptPoint::GenPromptPoint(const rclcpp::Node::SharedPtr& node)
       rclcpp::CallbackGroupType::MutuallyExclusive);
   callback_group_camera_ = node_->create_callback_group(
       rclcpp::CallbackGroupType::MutuallyExclusive);
+  callback_group_raw_image_ = node_->create_callback_group(
+      rclcpp::CallbackGroupType::MutuallyExclusive);
   INFO("AutoAnnotation GenPromptPoint constructor called, Version {}",
        ConstValue::kVersion);
   package_share_path_ =
@@ -152,6 +165,19 @@ GenPromptPoint::GenPromptPoint(const rclcpp::Node::SharedPtr& node)
   InitMapAndLabel();
   InitPublishAndSubscription();
   InitTfListener();
+}
+
+GenPromptPoint::~GenPromptPoint() {
+  stop_async_processing_.store(true);
+  pending_image_task_cv_.notify_all();
+  matched_image_task_cv_.notify_all();
+
+  if (image_match_thread_.joinable()) {
+    image_match_thread_.join();
+  }
+  if (image_worker_thread_.joinable()) {
+    image_worker_thread_.join();
+  }
 }
 
 void GenPromptPoint::InitConfigFromParamsServer() {
@@ -675,6 +701,7 @@ void GenPromptPoint::InitPublishAndSubscription() {
   CreatePointCloudSubscription();
   CreateImageSubscription();
   CreateCameraIntrinsicsSubscription();
+  StartAsyncProcessingThreads();
 }
 
 void GenPromptPoint::CreateAccumulatePointCloudPublisher() {
@@ -811,6 +838,16 @@ void GenPromptPoint::CreatePointCloudSubscription() {
 }
 
 void GenPromptPoint::CreateImageSubscription() {
+  auto image_task_qos =
+      rclcpp::QoS(rclcpp::KeepLast(ConstValue::kAsyncImageSubscriptionQueueSize));
+  image_task_qos.reliable();
+  image_task_qos.durability_volatile();
+
+  auto right_image_qos =
+      rclcpp::QoS(rclcpp::KeepLast(ConstValue::kCameraQueueSize));
+  right_image_qos.reliable();
+  right_image_qos.durability_volatile();
+
   // 准备订阅选项，指定相机组
   rclcpp::SubscriptionOptions options;
   options.callback_group = callback_group_camera_;
@@ -820,10 +857,9 @@ void GenPromptPoint::CreateImageSubscription() {
     INFO("Subscribing to original left camera image topic: {}",
          node_config_.left_image_topic);
     left_image_sub_ = node_->create_subscription<sensor_msgs::msg::Image>(
-        node_config_.left_image_topic,
-        rclcpp::SensorDataQoS().keep_last(ConstValue::kCameraQueueSize),
+        node_config_.left_image_topic, image_task_qos,
         [this](const sensor_msgs::msg::Image::SharedPtr msg) {
-          HandleLeftImageMsg(msg);
+          EnqueueLeftImageTask(msg);
         },
         options);
   }
@@ -832,8 +868,7 @@ void GenPromptPoint::CreateImageSubscription() {
     INFO("Subscribing to original right camera image topic: {}",
          node_config_.right_image_topic);
     right_image_sub_ = node_->create_subscription<sensor_msgs::msg::Image>(
-        node_config_.right_image_topic,
-        rclcpp::SensorDataQoS().keep_last(ConstValue::kCameraQueueSize),
+        node_config_.right_image_topic, right_image_qos,
         [this](const sensor_msgs::msg::Image::SharedPtr msg) {
           HandleRightImageMsg(msg);
         },
@@ -841,20 +876,265 @@ void GenPromptPoint::CreateImageSubscription() {
   }
 }
 
+void GenPromptPoint::StartAsyncProcessingThreads() {
+  stop_async_processing_.store(false);
+  image_match_thread_ = std::thread(&GenPromptPoint::RunImageMatchLoop, this);
+  image_worker_thread_ = std::thread(&GenPromptPoint::RunImageWorkerLoop, this);
+}
+
 void GenPromptPoint::HandleLeftImageMsg(
+    const sensor_msgs::msg::Image::SharedPtr msg) {
+  EnqueueLeftImageTask(msg);
+}
+
+void GenPromptPoint::HandleLeftRawImageSaveMsg(
+    const sensor_msgs::msg::Image::SharedPtr msg) {
+  annotation_status_.left_raw_image_rcv_count++;
+  if (annotation_status_.left_raw_image_rcv_count %
+          node_config_.image_save_interval !=
+      0) {
+    return;
+  }
+
+  try {
+    int64_t timestamp =
+        ComposeTimestampNs(msg->header.stamp.sec, msg->header.stamp.nanosec);
+    cv::Mat fig = ConvertRosImageToCvMat(msg);
+    if (fig.empty()) return;
+
+    SaveOriginImageToFile(msg, fig,
+                          annotation_status_.left_original_image_save_folder,
+                          "", timestamp);
+  } catch (const cv_bridge::Exception& e) {
+    ERROR("Catch cv_bridge Error in raw image save callback: {}", e.what());
+  }
+}
+
+void GenPromptPoint::EnqueueLeftImageTask(
     const sensor_msgs::msg::Image::SharedPtr msg) {
   annotation_status_.left_image_rcv_count++;
   if (annotation_status_.left_image_rcv_count %
           node_config_.image_save_interval !=
-      0)
+      0) {
     return;
+  }
+
+  PendingImageTask task;
+  task.role = CameraRole::Left;
+  task.timestamp_ns =
+      ComposeTimestampNs(msg->header.stamp.sec, msg->header.stamp.nanosec);
+  task.image_msg = msg;
+
+  int64_t pending_size = 0;
+  {
+    std::lock_guard<std::mutex> lock(locks_.mutex_image_tasks);
+    annotation_status_.pending_image_tasks.push_back(std::move(task));
+    PrunePendingImageTasksLocked(node_->get_clock()->now().nanoseconds());
+    pending_size = static_cast<int64_t>(
+        annotation_status_.pending_image_tasks.size());
+  }
+
+  THROTTLEINFO(1, "Enqueued left image task. timestamp_ns={} pending_size={}",
+               ComposeTimestampNs(msg->header.stamp.sec,
+                                  msg->header.stamp.nanosec),
+               pending_size);
+  pending_image_task_cv_.notify_one();
+}
+
+void GenPromptPoint::PrunePendingImageTasksLocked(int64_t now_ns) {
+  while (!annotation_status_.pending_image_tasks.empty() &&
+         now_ns - annotation_status_.pending_image_tasks.front().timestamp_ns >
+             ConstValue::kImageHistoryRetentionNs) {
+    annotation_status_.pending_image_tasks.pop_front();
+  }
+}
+
+void GenPromptPoint::PruneAccumulatedCloudHistoryLocked(int64_t now_ns) {
+  while (!annotation_status_.accumulated_cloud_history.empty() &&
+         now_ns -
+                 annotation_status_.accumulated_cloud_history.front()
+                     .timestamp_ns >
+             ConstValue::kCloudHistoryRetentionNs) {
+    annotation_status_.accumulated_cloud_history.pop_front();
+  }
+  while (annotation_status_.accumulated_cloud_history.size() >
+         ConstValue::kAccumulatedCloudHistoryLimit) {
+    annotation_status_.accumulated_cloud_history.pop_front();
+  }
+}
+
+bool GenPromptPoint::TryBuildMatchedTaskLocked(MatchedImageTask& out_task,
+                                               std::string& out_reason) {
+  if (annotation_status_.pending_image_tasks.empty()) {
+    out_reason = "pending_queue_empty";
+    return false;
+  }
+
+  const PendingImageTask& pending = annotation_status_.pending_image_tasks.front();
+  if (pending.role != CameraRole::Left) {
+    out_reason = "unsupported_camera_role";
+    annotation_status_.pending_image_tasks.pop_front();
+    return false;
+  }
+
+  std::deque<AccumulatedCloudTimeOnlySnapshot> history_times;
+  for (const auto& snapshot : annotation_status_.accumulated_cloud_history) {
+    history_times.push_back({snapshot.timestamp_ns});
+  }
+
+  const MatchingPolicy policy{
+      static_cast<int64_t>(ConstValue::kLidarToCameraMaxTimeDiff * 1e9),
+      ConstValue::kImageTaskMaxWaitNs,
+  };
+  const int64_t now_ns = node_->get_clock()->now().nanoseconds();
+  const MatchDecision decision = MatchImageToCloudTimestamp(
+      pending.timestamp_ns, history_times, policy, now_ns);
+
+  if (decision.status == MatchStatus::Pending) {
+    out_reason = "pending";
+    return false;
+  }
+
+  if (decision.status != MatchStatus::Matched) {
+    out_reason = (decision.status == MatchStatus::DropExpired)
+                     ? "image_task_expired"
+                     : "history_diff_exceeded";
+    annotation_status_.pending_image_tasks.pop_front();
+    return false;
+  }
+
+  auto matched_it = std::find_if(
+      annotation_status_.accumulated_cloud_history.begin(),
+      annotation_status_.accumulated_cloud_history.end(),
+      [&](const AccumulatedCloudSnapshot& snapshot) {
+        return snapshot.timestamp_ns == decision.matched_cloud_time_ns;
+      });
+  if (matched_it == annotation_status_.accumulated_cloud_history.end()) {
+    out_reason = "matched_snapshot_missing";
+    annotation_status_.pending_image_tasks.pop_front();
+    return false;
+  }
+
+  out_task.role = pending.role;
+  out_task.timestamp_ns = pending.timestamp_ns;
+  out_task.image_msg = pending.image_msg;
+  out_task.cloud_snapshot = matched_it->cloud;
+  annotation_status_.pending_image_tasks.pop_front();
+  out_reason = "matched";
+  return true;
+}
+
+void GenPromptPoint::MatchPendingImageTasks() {
+  MatchedImageTask matched_task;
+  std::string reason;
+  bool built = false;
+  int64_t pending_size = 0;
+  int64_t matched_size = 0;
+
+  {
+    std::scoped_lock lock(locks_.mutex_image_tasks, locks_.mutex_cache_cloud);
+    const int64_t now_ns = node_->get_clock()->now().nanoseconds();
+    PrunePendingImageTasksLocked(now_ns);
+    PruneAccumulatedCloudHistoryLocked(now_ns);
+    built = TryBuildMatchedTaskLocked(matched_task, reason);
+    if (built) {
+      annotation_status_.matched_image_tasks.push_back(matched_task);
+    }
+    pending_size =
+        static_cast<int64_t>(annotation_status_.pending_image_tasks.size());
+    matched_size =
+        static_cast<int64_t>(annotation_status_.matched_image_tasks.size());
+  }
+
+  if (built) {
+    matched_image_task_cv_.notify_one();
+    THROTTLEINFO(
+        1,
+        "Matched left image task. timestamp_ns={} matched_queue_size={} "
+        "pending_queue_size={}",
+        matched_task.timestamp_ns, matched_size, pending_size);
+    return;
+  }
+
+  if (reason != "pending" && reason != "pending_queue_empty") {
+    THROTTLEWARN(1,
+                 "Dropped or skipped left image task during matching. "
+                 "reason={} pending_queue_size={} matched_queue_size={}",
+                 reason, pending_size, matched_size);
+  }
+}
+
+void GenPromptPoint::ProcessMatchedImageTasks() {
+  MatchedImageTask task;
+  bool has_task = false;
+  {
+    std::lock_guard<std::mutex> lock(locks_.mutex_image_tasks);
+    if (!annotation_status_.matched_image_tasks.empty()) {
+      task = annotation_status_.matched_image_tasks.front();
+      annotation_status_.matched_image_tasks.pop_front();
+      has_task = true;
+    }
+  }
+
+  if (!has_task) return;
+
+  if (task.role == CameraRole::Left) {
+    ProcessMatchedLeftImageTask(task);
+    return;
+  }
+
+  WARN("Matched image task for role {} is not implemented yet.",
+       CameraRoleToString(task.role));
+}
+
+void GenPromptPoint::RunImageMatchLoop() {
+  while (!stop_async_processing_.load()) {
+    std::unique_lock<std::mutex> lock(locks_.mutex_image_tasks);
+    pending_image_task_cv_.wait_for(
+        lock, std::chrono::milliseconds(ConstValue::kMatcherTimerPeriodMs),
+        [this]() {
+          return stop_async_processing_.load() ||
+                 !annotation_status_.pending_image_tasks.empty();
+        });
+    lock.unlock();
+
+    if (stop_async_processing_.load()) {
+      break;
+    }
+    MatchPendingImageTasks();
+  }
+}
+
+void GenPromptPoint::RunImageWorkerLoop() {
+  while (!stop_async_processing_.load()) {
+    std::unique_lock<std::mutex> lock(locks_.mutex_image_tasks);
+    matched_image_task_cv_.wait_for(
+        lock, std::chrono::milliseconds(ConstValue::kWorkerTimerPeriodMs),
+        [this]() {
+          return stop_async_processing_.load() ||
+                 !annotation_status_.matched_image_tasks.empty();
+        });
+    lock.unlock();
+
+    if (stop_async_processing_.load()) {
+      break;
+    }
+    ProcessMatchedImageTasks();
+  }
+}
+
+void GenPromptPoint::ProcessMatchedLeftImageTask(const MatchedImageTask& task) {
+  if (!task.image_msg || !task.cloud_snapshot) {
+    WARN("Skip matched left image task due to missing image or cloud snapshot.");
+    return;
+  }
 
   try {
     auto start_time = std::chrono::high_resolution_clock::now();
-    int64_t timestamp = msg->header.stamp.sec * 1e9 + msg->header.stamp.nanosec;
+    const auto& msg = task.image_msg;
+    const int64_t timestamp = task.timestamp_ns;
     INFO("Recive Image timestamp: {}", timestamp);
 
-    // ================== 1. 基础数据准备 ==================
     cv::Mat fig = ConvertRosImageToCvMat(msg);
     if (fig.empty()) return;
 
@@ -863,77 +1143,53 @@ void GenPromptPoint::HandleLeftImageMsg(
       return;
     }
 
-    // ================== 2. 获取并补偿点云 (时间对齐) ==================
     pcl::PointCloud<PointXYZIT>::Ptr cloud_in_lidar_raw(
-        new pcl::PointCloud<PointXYZIT>);
-    int64_t img_time_ns = rclcpp::Time(msg->header.stamp).nanoseconds();
-    bool has_cached_cloud = false;
-    int64_t latest_cloud_ts_ns = 0;
-    double cache_lag_ms = 0.0;
-    {
-      std::lock_guard<std::mutex> lock(locks_.mutex_cache_cloud);
-      has_cached_cloud = annotation_status_.latest_accumulated_cloud != nullptr;
-      if (has_cached_cloud) {
-        latest_cloud_ts_ns =
-            annotation_status_.latest_cloud_timestamp.nanoseconds();
-        cache_lag_ms = (img_time_ns - latest_cloud_ts_ns) / 1e6;
-      }
-    }
-    THROTTLEINFO(
-        1,
-        "Image sync precheck. img_time_ns={} has_cached_cloud={} "
-        "latest_cloud_ts_ns={} cache_lag_ms={:.3f}",
-        img_time_ns, has_cached_cloud, latest_cloud_ts_ns, cache_lag_ms);
-    if (!WaitForSyncedPointCloud(img_time_ns, cloud_in_lidar_raw)) return;
-
+        new pcl::PointCloud<PointXYZIT>(*task.cloud_snapshot));
     rclcpp::Time img_time = msg->header.stamp;
     rclcpp::Time lidar_time(cloud_in_lidar_raw->header.stamp * 1000);
 
-    // 计算从 Lidar(t_lidar) 到 Lidar(t_img) 的自车运动补偿矩阵
     Eigen::Matrix4f tf_lidar_compensation;
     GetTimeInterpolatedTransform(
         ConstValue::kLidarLink, img_time, ConstValue::kLidarLink, lidar_time,
         ConstValue::kInsMap, Eigen::Isometry3d::Identity(),
         tf_lidar_compensation);
 
-    // 生成【图像时刻对齐】的 Lidar 点云
     pcl::PointCloud<PointXYZIT>::Ptr aligned_lidar_cloud(
         new pcl::PointCloud<PointXYZIT>);
     pcl::transformPointCloud(*cloud_in_lidar_raw, *aligned_lidar_cloud,
                              tf_lidar_compensation);
-    aligned_lidar_cloud->header.stamp =
-        img_time.nanoseconds() / 1000;  // 覆写时间戳为图像时间
+    aligned_lidar_cloud->header.stamp = img_time.nanoseconds() / 1000;
 
-    // ================== 3. 保存基础传感器数据 ==================
-    if (node_config_.save_raw_image) {
-      SaveOriginImageToFile(msg, fig,
-                            annotation_status_.left_original_image_save_folder,
-                            "", timestamp);
-    }
     if (node_config_.save_synced_pcd) {
       std::string pcd_filename = annotation_status_.accumulate_pc_save_folder +
                                  "/" + std::to_string(timestamp) + ".pcd";
       if (pcl::io::savePCDFileBinary(pcd_filename, *aligned_lidar_cloud) == 0) {
         INFO("Saved Aligned PCD: {}", timestamp);
+        if (node_config_.save_raw_image) {
+          SaveOriginImageToFile(msg, fig,
+                                annotation_status_.left_original_image_save_folder,
+                                "", timestamp);
+        }
       }
+    } else if (node_config_.save_raw_image) {
+      SaveOriginImageToFile(msg, fig,
+                            annotation_status_.left_original_image_save_folder,
+                            "", timestamp);
     }
 
-    // ================== 4. 自动标注流水线 (Auto Annotation) ==================
     if (!node_config_.auto_annotation) return;
 
     Eigen::Matrix4f tf_map_to_cam, tf_map_to_lidar;
     if (!GetMapToCameraAndLidarTf(img_time, tf_map_to_cam, tf_map_to_lidar)) {
       WARN("Skipping annotation for timestamp {} due to missing TF.",
            timestamp);
-      // 虽然没 TF，但可以保底输出一个空的 json 避免文件缺失
-      if (node_config_.generate_xtreme1_json)
+      if (node_config_.generate_xtreme1_json) {
         GenerateCameraExtrinsic(timestamp, fig.cols, fig.rows,
                                 Eigen::Matrix4f::Identity());
+      }
       return;
     }
 
-    // 将对齐后的雷达点云转到相机系 (因为点云已经是 t_img
-    // 时刻，直接用静态外参即可！)
     Eigen::Matrix4f static_lidar_to_cam =
         annotation_status_.isometry_lcam2lidar.inverse().matrix().cast<float>();
     pcl::PointCloud<PointXYZIT>::Ptr cloud_in_cam(
@@ -941,7 +1197,6 @@ void GenPromptPoint::HandleLeftImageMsg(
     pcl::transformPointCloud(*aligned_lidar_cloud, *cloud_in_cam,
                              static_lidar_to_cam);
 
-    // --- 4.1 深度图与语义分割 ---
     cv::Mat current_scan_depth_f32;
     if (node_config_.generate_depth_map ||
         node_config_.generate_semantic_mask) {
@@ -982,7 +1237,6 @@ void GenPromptPoint::HandleLeftImageMsg(
       }
     }
 
-    // --- 4.2 KITTI / NuScenes 3D Bounding Box ---
     if (node_config_.generate_kitti_label) {
       GenerateKITTILabel(
           timestamp, fig, tf_map_to_cam, annotation_status_.left_intrinsic_data,
@@ -995,7 +1249,6 @@ void GenPromptPoint::HandleLeftImageMsg(
         SaveOriginImageToFile(msg, verify_img,
                               annotation_status_.left_fuse_image_save_folder,
                               "kitti_verify", timestamp);
-        // 使用对齐后的点云进行验证
         VerifyKITTILabelInPointCloud(
             timestamp, aligned_lidar_cloud,
             annotation_status_.isometry_lcam2lidar,
@@ -1004,12 +1257,6 @@ void GenPromptPoint::HandleLeftImageMsg(
       }
     }
 
-    if (node_config_.generate_nusc_label) {
-      // 【NEXT ACTION】这里就是我们接下来要写 NuScenes 格式收集逻辑的地方！
-      // INFO("NuScenes data collection triggered for {}", timestamp);
-    }
-
-    // --- 4.3 其他格式导出 ---
     if (node_config_.generate_xtreme1_json) {
       GenerateCameraExtrinsic(timestamp, fig.cols, fig.rows, tf_map_to_lidar);
     }
@@ -1020,7 +1267,7 @@ void GenPromptPoint::HandleLeftImageMsg(
                     .count() /
                 1000.0;
     INFO("Handle Left Image Pipeline Done. Time taken: {:.2f} ms", ms);
-  } catch (cv_bridge::Exception& e) {
+  } catch (const cv_bridge::Exception& e) {
     ERROR("Catch cv_bridge Error: {}", e.what());
   }
 }
@@ -1041,7 +1288,8 @@ void GenPromptPoint::HandleRightImageMsg(
 
     // 4. 生成文件名（建议使用时间戳或序号）
     // 使用毫秒级时间戳可以避免文件名重复
-    int64_t timestamp = msg->header.stamp.sec * 1e9 + msg->header.stamp.nanosec;
+    int64_t timestamp =
+        ComposeTimestampNs(msg->header.stamp.sec, msg->header.stamp.nanosec);
     std::string filename = node_config_.right_camera_save_folder + "/img_" +
                            std::to_string(timestamp) + ".png";
 

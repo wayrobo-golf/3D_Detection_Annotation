@@ -87,6 +87,33 @@ def select_xtreme_upload_tasks(valid_tasks, empty_tasks, max_empty_frame_ratio, 
     random.shuffle(tasks)
     return kept_empty_tasks, discarded_empty_tasks, tasks
 
+
+def write_submit_frame_manifest(manifest_path: Path, tasks):
+    payload = []
+    for (
+        frame_id,
+        _config_file,
+        _label_path,
+        _pcd_path,
+        img_path,
+        scene_name,
+        _scene_dir,
+    ) in tasks:
+        payload.append(
+            {
+                "scene_name": scene_name,
+                "frame_id": frame_id,
+                "img_ext": Path(img_path).suffix,
+            }
+        )
+
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return manifest_path
+
 def get_bags_to_process(path):
     """智能解析路径：支持单个 .db3 文件，或遍历目录下的所有 bag"""
     bags = []
@@ -347,6 +374,9 @@ def build_datasets(workspace_path, location_str):
     print(f"⚖️ 保留 {len(kept_empty_tasks)} 个负样本，拟彻底销毁 {discarded_empty_count} 个多余空帧及其所有附属副产物。")
     print(f"🚀 共整合 {len(tasks)} 帧数据，正在转换流水线...")
 
+    submit_manifest_path = Path(xtreme1_root_dir) / "submit_frames.json"
+    write_submit_frame_manifest(submit_manifest_path, tasks)
+
     # 3. 核心大循环：处理保留下来的帧
     split_idx = int(len(tasks) * SPLIT_RATIO)
     train_ids, val_ids = [], []
@@ -481,6 +511,7 @@ def build_datasets(workspace_path, location_str):
     return {
         "xtreme_upload_dir": Path(xtreme1_root_dir),
         "xtreme_zip_path": Path(xtreme1_zip),
+        "submit_manifest_path": submit_manifest_path,
         "raw_archive_dir": Path(archive_target_dir) if archive_target_dir else None,
         "full_raw_archive_dir": Path(full_archive_target_dir) if full_archive_target_dir else None,
     }

@@ -6,7 +6,10 @@ namespace automatic_annotation {
   namespace ConstValue {
     constexpr size_t kLidarQueueSize = 5;
     constexpr size_t kCameraQueueSize = 1;
+    constexpr size_t kRawImageQueueSize = 64;
+    constexpr size_t kAsyncImageSubscriptionQueueSize = 64;
     constexpr size_t kUndistortedLidarQueueSize = 1;
+    constexpr size_t kAccumulatedCloudHistoryLimit = 64;
     constexpr uint32_t kPointCloudTypeOriginal = 0;
     constexpr uint32_t kPointCloudTypeUndistorted = 1;
     constexpr uint32_t kImageSourceLeftCamera = 0;
@@ -17,6 +20,11 @@ namespace automatic_annotation {
     constexpr uint32_t kCheckTfPeriodMs = 500;
     constexpr int32_t kThresholdPcCheck = 5;
     constexpr double kLidarToCameraMaxTimeDiff = 0.02;
+    constexpr int64_t kImageTaskMaxWaitNs = 1000000000LL;
+    constexpr int64_t kImageHistoryRetentionNs = 3000000000LL;
+    constexpr int64_t kCloudHistoryRetentionNs = 3000000000LL;
+    constexpr int64_t kMatcherTimerPeriodMs = 10;
+    constexpr int64_t kWorkerTimerPeriodMs = 5;
     constexpr double kDefaultTfWaitTimeoutSec = 3.0;
     constexpr double kRad2Deg = 180.0 / M_PI;
     constexpr double kSeconds2Milliseconds = 1000.0;

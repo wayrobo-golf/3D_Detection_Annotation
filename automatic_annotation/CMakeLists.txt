@@ -32,6 +32,7 @@ include_directories(
 
 add_executable(automatic_annotation_node 
   src/automatic_annotation_node.cpp 
+  src/image_matching_utils.cpp
   src/gen_prompt_point.cpp
 )
 
@@ -68,9 +69,19 @@ target_link_libraries(automatic_annotation_node
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
+  find_package(ament_cmake_gtest REQUIRED)
   set(ament_cmake_copyright_FOUND TRUE)
   set(ament_cmake_cpplint_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
+
+  ament_add_gtest(
+    test_image_matching_utils
+    test/test_image_matching_utils.cpp
+    src/image_matching_utils.cpp
+  )
+  if(TARGET test_image_matching_utils)
+    target_include_directories(test_image_matching_utils PRIVATE include)
+  endif()
 endif()
 
 install(TARGETS automatic_annotation_node 

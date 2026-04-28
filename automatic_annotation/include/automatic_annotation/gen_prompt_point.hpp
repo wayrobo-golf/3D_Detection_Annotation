@@ -4,6 +4,8 @@
 // 必须在包含 PCL 头文件前定义，确保自定义点类型被正确处理
 #include <cv_bridge_with_opencv411/cv_bridge.h>
 
+#include <atomic>
+#include <condition_variable>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -25,6 +27,7 @@
 #include <memory>
 #include <nav_msgs/msg/odometry.hpp>
 #include <string>
+#include <thread>
 #include <tf2_eigen/tf2_eigen.hpp>
 #include <vector>
 
@@ -179,6 +182,26 @@ struct AutoAnnotationConfig {
   Eigen::Isometry3d default_isometry_lidar2ins = Eigen::Isometry3d::Identity();
 };
 
+enum class CameraRole { Left = 0, Right = 1 };
+
+struct PendingImageTask {
+  CameraRole role = CameraRole::Left;
+  int64_t timestamp_ns = 0;
+  sensor_msgs::msg::Image::SharedPtr image_msg;
+};
+
+struct AccumulatedCloudSnapshot {
+  int64_t timestamp_ns = 0;
+  pcl::PointCloud<PointXYZIT>::Ptr cloud;
+};
+
+struct MatchedImageTask {
+  CameraRole role = CameraRole::Left;
+  int64_t timestamp_ns = 0;
+  sensor_msgs::msg::Image::SharedPtr image_msg;
+  pcl::PointCloud<PointXYZIT>::Ptr cloud_snapshot;
+};
+
 struct AutoAnnotationStatus {
   // 左相机参数
   bool has_left_intrinsics = false;
@@ -192,6 +215,7 @@ struct AutoAnnotationStatus {
   std::vector<double> right_intrinsic_data;
   // 图像统计
   uint32_t left_image_rcv_count = 0;
+  uint32_t left_raw_image_rcv_count = 0;
   uint32_t right_image_rcv_count = 0;
   // 点云类型
   enum class PointCloudType { Original = 0, Undistorted = 1 };
@@ -200,6 +224,9 @@ struct AutoAnnotationStatus {
   std::deque<pcl::PointCloud<LivoxPoint>::Ptr> queue_original;
   std::deque<pcl::PointCloud<UndistortedLivoxPoint>::Ptr> queue_undistorted;
   std::deque<pcl::PointCloud<PointXYZIT>::Ptr> queue_deskewed;
+  std::deque<PendingImageTask> pending_image_tasks;
+  std::deque<MatchedImageTask> matched_image_tasks;
+  std::deque<AccumulatedCloudSnapshot> accumulated_cloud_history;
   pcl::PointCloud<PointXYZIT>::Ptr latest_accumulated_cloud;
   rclcpp::Time latest_cloud_timestamp;
   // 全局地图缓存
@@ -240,7 +267,7 @@ struct AutoAnnotationStatus {
 class GenPromptPoint {
  public:
   explicit GenPromptPoint(const rclcpp::Node::SharedPtr& node);
-  ~GenPromptPoint() = default;
+  ~GenPromptPoint();
 
  private:
   rclcpp::Node::SharedPtr node_ = nullptr;
@@ -248,6 +275,8 @@ class GenPromptPoint {
       pointcloud_sub_ = nullptr;
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr left_image_sub_ =
       nullptr;
+  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr
+      left_raw_image_sub_ = nullptr;
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr right_image_sub_ =
       nullptr;
   rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr
@@ -266,6 +295,7 @@ class GenPromptPoint {
   rclcpp::CallbackGroup::SharedPtr callback_group_lidar_ = nullptr;
   rclcpp::CallbackGroup::SharedPtr callback_group_pose_ = nullptr;
   rclcpp::CallbackGroup::SharedPtr callback_group_camera_ = nullptr;
+  rclcpp::CallbackGroup::SharedPtr callback_group_raw_image_ = nullptr;
 
   AutoAnnotationConfig node_config_;
   AutoAnnotationStatus annotation_status_;
@@ -274,8 +304,14 @@ class GenPromptPoint {
     std::mutex mutex_use_tf;
     std::mutex mutex_cache_cloud;
     std::mutex mutex_pose_cache;
+    std::mutex mutex_image_tasks;
   };
   mutable LockGroup locks_;
+  std::condition_variable pending_image_task_cv_;
+  std::condition_variable matched_image_task_cv_;
+  std::thread image_match_thread_;
+  std::thread image_worker_thread_;
+  std::atomic<bool> stop_async_processing_{false};
   std::map<std::string, uint8_t> class_name_to_id_;
   std::map<std::string, std::string> class_name_to_label_;
   std::string package_share_path_;
@@ -305,6 +341,7 @@ class GenPromptPoint {
   void CreateInsOdomSubscription();
   void CreateImageSubscription();
   void CreateCameraIntrinsicsSubscription();
+  void StartAsyncProcessingThreads();
   void InitTfListener();
   // 回调函数
   void LeftIntrinsicsCallback(std_msgs::msg::Float64MultiArray::SharedPtr msg);
@@ -312,8 +349,21 @@ class GenPromptPoint {
   void InsOdomCallback(nav_msgs::msg::Odometry::SharedPtr msg);
   void CheckTfCallback();
   // 业务函数
+  void EnqueueLeftImageTask(const sensor_msgs::msg::Image::SharedPtr msg);
+  void HandleLeftRawImageSaveMsg(const sensor_msgs::msg::Image::SharedPtr msg);
   void HandleLeftImageMsg(const sensor_msgs::msg::Image::SharedPtr msg);
   void HandleRightImageMsg(const sensor_msgs::msg::Image::SharedPtr msg);
+  void MatchPendingImageTasks();
+  void ProcessMatchedImageTasks();
+  void ProcessMatchedLeftImageTask(const MatchedImageTask& task);
+  void RunImageMatchLoop();
+  void RunImageWorkerLoop();
+  void AppendAccumulatedCloudSnapshot(
+      const pcl::PointCloud<PointXYZIT>::Ptr& cloud, int64_t timestamp_ns);
+  void PrunePendingImageTasksLocked(int64_t now_ns);
+  void PruneAccumulatedCloudHistoryLocked(int64_t now_ns);
+  bool TryBuildMatchedTaskLocked(MatchedImageTask& out_task,
+                                 std::string& out_reason);
   bool LookUpTransform(const std::string& target_frame,
                        const std::string& source_frame,
                        geometry_msgs::msg::TransformStamped& out_transform);
@@ -680,7 +730,25 @@ class GenPromptPoint {
         annotation_status_.latest_accumulated_cloud =
             final_cloud_local;  // 统一覆盖
         annotation_status_.latest_cloud_timestamp = header.stamp;
+        const int64_t snapshot_time_ns = rclcpp::Time(header.stamp).nanoseconds();
+        AccumulatedCloudSnapshot snapshot;
+        snapshot.timestamp_ns = snapshot_time_ns;
+        snapshot.cloud.reset(new pcl::PointCloud<PointXYZIT>(*final_cloud_local));
+        annotation_status_.accumulated_cloud_history.push_back(
+            std::move(snapshot));
+        while (!annotation_status_.accumulated_cloud_history.empty() &&
+               snapshot_time_ns -
+                       annotation_status_.accumulated_cloud_history.front()
+                           .timestamp_ns >
+                   ConstValue::kCloudHistoryRetentionNs) {
+          annotation_status_.accumulated_cloud_history.pop_front();
+        }
+        while (annotation_status_.accumulated_cloud_history.size() >
+               ConstValue::kAccumulatedCloudHistoryLimit) {
+          annotation_status_.accumulated_cloud_history.pop_front();
+        }
       }
+      pending_image_task_cv_.notify_one();
       if (newest_age_s == std::numeric_limits<float>::max()) {
         newest_age_s = 0.0f;
       }

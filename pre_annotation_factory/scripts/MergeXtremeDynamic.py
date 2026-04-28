@@ -204,6 +204,40 @@ def compute_max_empty_frames(positive_count, max_empty_ratio):
 
     return int(math.floor((positive_count * max_empty_ratio) / (1.0 - max_empty_ratio)))
 
+
+def load_submit_frame_manifest(submit_manifest_path):
+    if submit_manifest_path is None:
+        raise FileNotFoundError("Missing submit manifest path for finalize.")
+
+    manifest_path = Path(submit_manifest_path)
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"Missing submit manifest: {manifest_path}")
+
+    with manifest_path.open("r", encoding="utf-8") as f:
+        payload = json.load(f)
+
+    if not isinstance(payload, list):
+        raise ValueError(f"Invalid submit manifest payload: {manifest_path}")
+
+    return payload
+
+
+def resolve_raw_scene_dir_for_frame(raw_archive_root: Path, scene_name: str, frame_id: str) -> Path:
+    scene_matches = sorted(raw_archive_root.glob(f"data_record_*/{scene_name}"))
+    matched_scene_dirs = [
+        scene_dir
+        for scene_dir in scene_matches
+        if (scene_dir / "camera_config" / f"{frame_id}.json").exists()
+    ]
+
+    if len(matched_scene_dirs) != 1:
+        raise FileNotFoundError(
+            "Expected exactly one raw scene directory for "
+            f"{scene_name}/{frame_id}, got {len(matched_scene_dirs)}"
+        )
+
+    return matched_scene_dirs[0]
+
 # ================= 编译流水线 =================
 def build_final_dataset(
     location_str,
@@ -214,6 +248,7 @@ def build_final_dataset(
     convert_pcd_to_bin=None,
     random_seed=None,
     max_empty_label_ratio=None,
+    submit_manifest_path=None,
 ):
     print(f"\n{'='*50}")
     print("🚀 开始终极编译：融合 Xtreme1 人工精修与原始数据...")
@@ -240,48 +275,46 @@ def build_final_dataset(
         (training_base / fol).mkdir(parents=True, exist_ok=True)
     imagesets_dir.mkdir(parents=True, exist_ok=True)
 
-    scene_dirs = sorted(raw_archive_root.glob("data_record_*/Scene_*"))
+    manifest_items = load_submit_frame_manifest(submit_manifest_path)
     scanned_tasks = []
 
-    for scene_dir in scene_dirs:
-        scene_name = scene_dir.name
+    for item in manifest_items:
+        scene_name = item["scene_name"]
+        frame_id = item["frame_id"]
+        img_ext = item["img_ext"]
+
+        scene_dir = resolve_raw_scene_dir_for_frame(raw_archive_root, scene_name, frame_id)
         xtreme_scene_dir = xtreme_export_root / scene_name
-        has_xtreme_export = xtreme_scene_dir.exists()
-        
-        config_files = glob.glob(str(scene_dir / "camera_config" / "*.json"))
-        
-        for config_path in config_files:
-            frame_id = Path(config_path).stem
-            img_matches = glob.glob(str(scene_dir / "camera_image_0" / f"{frame_id}.*"))
-            if not img_matches: continue
-            
-            pcd_path = scene_dir / "lidar_point_cloud_0" / f"{frame_id}.pcd"
-            if not pcd_path.exists(): continue
-            
-            raw_label_path = scene_dir / "label_2" / f"{frame_id}.txt"
-            xtreme_json_path = xtreme_scene_dir / "result" / f"{frame_id}.json"
-            if has_xtreme_export:
-                if xtreme_json_path.exists():
-                    label_source = "xtreme"
-                    target_label_path = xtreme_json_path
-                else:
-                    label_source = "empty_missing_json"
-                    target_label_path = None
-            else:
-                label_source = "empty_missing_scene"
-                target_label_path = None
-                
-            scanned_tasks.append({
-                "frame_id": frame_id,
-                "scene_name": scene_name,
-                "config_path": Path(config_path),
-                "img_path": Path(img_matches[0]),
-                "pcd_path": pcd_path,
-                "label_source": label_source,
-                "label_path": target_label_path,
-                "raw_label_path": raw_label_path,
-                "kitti_lines": None
-            })
+
+        config_path = scene_dir / "camera_config" / f"{frame_id}.json"
+        img_path = scene_dir / "camera_image_0" / f"{frame_id}{img_ext}"
+        pcd_path = scene_dir / "lidar_point_cloud_0" / f"{frame_id}.pcd"
+        raw_label_path = scene_dir / "label_2" / f"{frame_id}.txt"
+        xtreme_json_path = xtreme_scene_dir / "result" / f"{frame_id}.json"
+
+        if not config_path.exists() or not img_path.exists() or not pcd_path.exists():
+            raise FileNotFoundError(
+                f"Submit manifest frame is missing raw artifacts: {scene_name}/{frame_id}"
+            )
+
+        if xtreme_json_path.exists():
+            label_source = "xtreme"
+            target_label_path = xtreme_json_path
+        else:
+            label_source = "empty_missing_json"
+            target_label_path = None
+
+        scanned_tasks.append({
+            "frame_id": frame_id,
+            "scene_name": scene_name,
+            "config_path": config_path,
+            "img_path": img_path,
+            "pcd_path": pcd_path,
+            "label_source": label_source,
+            "label_path": target_label_path,
+            "raw_label_path": raw_label_path,
+            "kitti_lines": None
+        })
 
     if not scanned_tasks:
         print("❌ 未发现任何有效帧数据，整合终止。")
@@ -318,7 +351,6 @@ def build_final_dataset(
     split_idx = int(len(tasks) * SPLIT_RATIO)
     train_ids, val_ids = [], []
     xtreme_used_count = 0
-    empty_missing_scene_count = 0
     empty_missing_json_count = 0
     empty_xtreme_json_count = 0
 
@@ -337,17 +369,13 @@ def build_final_dataset(
             with open(out_label, 'w') as f:
                 f.writelines(task["kitti_lines"])
             xtreme_used_count += 1
-        elif task["label_source"] in {"empty_missing_json", "empty_missing_scene", "empty_xtreme_json"}:
+        elif task["label_source"] in {"empty_missing_json", "empty_xtreme_json"}:
             with open(out_label, 'w', encoding='utf-8'):
                 pass
             if task["label_source"] == "empty_missing_json":
                 empty_missing_json_count += 1
                 if has_non_empty_label(task["raw_label_path"]):
                     print(f"ℹ️ 帧 {frame_id} 在 Xtreme 场景中缺失导出 json，已按人工判空覆盖原始非空标注。")
-            elif task["label_source"] == "empty_missing_scene":
-                empty_missing_scene_count += 1
-                if has_non_empty_label(task["raw_label_path"]):
-                    print(f"ℹ️ 帧 {frame_id} 所在 Scene 未出现在 Xtreme 导出中，已按空标签处理并覆盖原始非空标注。")
             else:
                 empty_xtreme_json_count += 1
         else:
@@ -378,7 +406,6 @@ def build_final_dataset(
 
     print(
         f"\n✅ 编译完成！共使用 Xtreme精修: {xtreme_used_count}帧, "
-        f"Scene 缺失判空: {empty_missing_scene_count}帧, "
         f"缺失 json 判空: {empty_missing_json_count}帧, "
         f"空 Xtreme 结果判空: {empty_xtreme_json_count}帧, "
         f"丢弃空标签: {dropped_empty_count}帧。"
