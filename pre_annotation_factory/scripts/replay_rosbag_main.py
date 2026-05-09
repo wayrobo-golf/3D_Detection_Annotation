@@ -25,12 +25,12 @@ WORKSPACE_PATH = "/home/keyaoli/Code/Wayrobo/3D_Detection_Annotation"
 # 2. 存放所有 bag 的根目录
 # TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/BaoLi20260305"
 # TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/BaoLi20260305_Debug"
-# TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/XiangXue20260323"
+TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/XiangXue20260323"
 # TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/XiangXue20260323_Debug"
 # TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/YeNan20260318"
 # TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/YeNan20260318_Debug"
 # TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/Binjiang20260319"
-TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/Binjiang20260319_Debug"
+# TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/Binjiang20260319_Debug"
 # TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/YinXiu20260414/20260414/extracted"
 # TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/DongZhuang20260411/2026_4_11/extracted"
 # TARGET_PATH = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_Rosbag/DongZhuang20260411_Debug"
@@ -54,7 +54,7 @@ GENERATE_KITTI_DATASET = False
 KITTI_OUTPUT_DIR = "/home/keyaoli/Data/AutoAnnotation/Wayrobo_KITTI_Dataset/Debug"
 
 # Xtreme1 输出路径
-XTREME1_OUTPUT_DIR = "/home/keyaoli/Data/AutoAnnotation/DataRecord/Binjiang20260319/Xtreme1_Upload"
+XTREME1_OUTPUT_DIR = "/home/keyaoli/Data/AutoAnnotation/DataRecord/XiangXue20260323/Xtreme1_Upload"
 
 SPLIT_RATIO = 0.8         # 80% 划入 train.txt, 20% 划入 val.txt
 CONVERT_PCD_TO_BIN = True # 是否自动将点云转为 OpenPCDet 必须的 bin 格式 (仅在 GENERATE_KITTI_DATASET=True 时有效)

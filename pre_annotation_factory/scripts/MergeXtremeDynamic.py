@@ -21,10 +21,10 @@ except ImportError:
 
 # ================= 配置区 =================
 # 1. Xtreme1 导出的标注数据根目录 (解压后的 Scene_XX 所在目录)
-XTREME_EXPORT_ROOT = Path("/home/keyaoli/Data/AutoAnnotation/Xtreme/ExportFromXtreme/BaoLi_20260305-20260411012156")
+XTREME_EXPORT_ROOT = Path("/home/keyaoli/Data/AutoAnnotation/Xtreme/ExportFromXtreme/YeNan_20260318-20260417080245")
 
 # 2. 你的原始数据集归档目录 (_origin 后缀的那个文件夹)
-RAW_ARCHIVE_ROOT = Path("/home/keyaoli/Data/AutoAnnotation/Auto_Annotation_Origin/3DBox_Annotation_20260407181828_BaoLi_20260305_origin")
+RAW_ARCHIVE_ROOT = Path("/home/keyaoli/Data/AutoAnnotation/Auto_Annotation_Origin/3DBox_Annotation_20260429120448_YeNan_20260318_origin")
 
 # 3. 最终训练集输出目录
 FINAL_KITTI_OUTPUT_DIR = Path("/home/keyaoli/Data/AutoAnnotation/Wayrobo_KITTI_Dataset/Debug")
@@ -60,6 +60,16 @@ def load_camera_config(config_path):
         T_lidar2map = np.array(data["tf_lidar_to_map"]).reshape((4, 4), order='F')
         
     return K, T_lidar2cam, T_lidar2map, img_w, img_h
+
+
+def has_tf_lidar_to_map(config_path):
+    with open(config_path, 'r') as f:
+        data = json.load(f)
+    if isinstance(data, list):
+        data = data[0]
+    if "camera_internal" not in data:
+        data = data[list(data.keys())[0]]
+    return "tf_lidar_to_map" in data
 
 def generate_calib(config_path, out_calib):
     K, T_lidar2cam, T_lidar2map, _, _ = load_camera_config(config_path)
@@ -223,6 +233,7 @@ def build_final_dataset(location_str):
 
     scene_dirs = sorted(RAW_ARCHIVE_ROOT.glob("data_record_*/Scene_*"))
     scanned_tasks = []
+    filtered_missing_tf_count = 0
 
     for scene_dir in scene_dirs:
         scene_name = scene_dir.name
@@ -233,6 +244,10 @@ def build_final_dataset(location_str):
         
         for config_path in config_files:
             frame_id = Path(config_path).stem
+            if not has_tf_lidar_to_map(config_path):
+                filtered_missing_tf_count += 1
+                continue
+
             img_matches = glob.glob(str(scene_dir / "camera_image_0" / f"{frame_id}.*"))
             if not img_matches: continue
             
@@ -265,6 +280,7 @@ def build_final_dataset(location_str):
             })
 
     if not scanned_tasks:
+        print(f"ℹ️ 已过滤 {filtered_missing_tf_count} 帧缺 tf_lidar_to_map 数据。")
         print("❌ 未发现任何有效帧数据，整合终止。")
         return
 
@@ -364,6 +380,7 @@ def build_final_dataset(location_str):
         f"空 Xtreme 结果判空: {empty_xtreme_json_count}帧, "
         f"丢弃空标签: {dropped_empty_count}帧。"
     )
+    print(f"ℹ️ 已过滤 {filtered_missing_tf_count} 帧缺 tf_lidar_to_map 数据。")
     print(f"📊 划分情况 -> 训练集: {len(train_ids)}帧，验证集: {len(val_ids)}帧。")
     
     print(f"📦 正在打包最终极训练数据集 (ZIP)...")

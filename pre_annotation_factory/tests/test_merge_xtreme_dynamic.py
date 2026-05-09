@@ -16,43 +16,69 @@ def load_merge_module():
     return module
 
 
-def write_camera_config(config_path: Path):
+def write_camera_config(config_path: Path, include_tf_lidar_to_map: bool = True):
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = [
-        {
-            "camera_internal": {
-                "fx": 1000.0,
-                "fy": 1000.0,
-                "cx": 960.0,
-                "cy": 540.0,
-            },
-            "width": 1920,
-            "height": 1080,
-            "camera_external": [
-                1.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                1.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                1.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                1.0,
-            ],
-        }
-    ]
+    config = {
+        "camera_internal": {
+            "fx": 1000.0,
+            "fy": 1000.0,
+            "cx": 960.0,
+            "cy": 540.0,
+        },
+        "width": 1920,
+        "height": 1080,
+        "camera_external": [
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+        ],
+    }
+    if include_tf_lidar_to_map:
+        config["tf_lidar_to_map"] = [
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+        ]
+    payload = [config]
     config_path.write_text(json.dumps(payload), encoding="utf-8")
 
 
-def create_raw_frame(scene_dir: Path, frame_id: str, raw_label: str):
-    write_camera_config(scene_dir / "camera_config" / f"{frame_id}.json")
+def create_raw_frame(
+    scene_dir: Path,
+    frame_id: str,
+    raw_label: str,
+    include_tf_lidar_to_map: bool = True,
+):
+    write_camera_config(
+        scene_dir / "camera_config" / f"{frame_id}.json",
+        include_tf_lidar_to_map=include_tf_lidar_to_map,
+    )
     (scene_dir / "camera_image_0").mkdir(parents=True, exist_ok=True)
     (scene_dir / "camera_image_0" / f"{frame_id}.png").write_bytes(b"fake-image")
     (scene_dir / "lidar_point_cloud_0").mkdir(parents=True, exist_ok=True)
@@ -224,3 +250,37 @@ def test_merge_fails_when_only_empty_frames_remain(tmp_path):
 
     with pytest.raises(ValueError, match="zero positive frames"):
         module.build_final_dataset("unit_test")
+
+
+def test_frames_missing_tf_lidar_to_map_are_filtered_out(tmp_path, capsys):
+    module = load_merge_module()
+
+    raw_root = tmp_path / "raw"
+    xtreme_root = tmp_path / "xtreme"
+    output_root = tmp_path / "output"
+    scene_dir = raw_root / "data_record_20260414" / "Scene_01"
+
+    create_raw_frame(
+        scene_dir,
+        "missing_tf_frame",
+        "raw-label\n",
+        include_tf_lidar_to_map=False,
+    )
+    create_xtreme_result(xtreme_root, "Scene_01", "missing_tf_frame")
+
+    create_raw_frame(scene_dir, "valid_frame", "raw-label\n")
+    create_xtreme_result(xtreme_root, "Scene_01", "valid_frame")
+
+    module.RAW_ARCHIVE_ROOT = raw_root
+    module.XTREME_EXPORT_ROOT = xtreme_root
+    stub_external_effects(module, output_root)
+    module.MAX_EMPTY_LABEL_RATIO = 1.0
+    module.parse_xtreme_to_kitti_lines = lambda *_args, **_kwargs: [
+        "Car 0.00 0 0.00 0.00 0.00 10.00 10.00 1.00 1.00 1.00 0.00 0.00 10.00 0.00 0.00 0.00\n"
+    ]
+
+    module.build_final_dataset("unit_test")
+
+    label_files = read_output_labels(output_root)
+    assert [path.stem for path in label_files] == ["valid_frame"]
+    assert "已过滤 1 帧缺 tf_lidar_to_map 数据" in capsys.readouterr().out
