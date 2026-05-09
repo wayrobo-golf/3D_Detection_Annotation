@@ -98,6 +98,18 @@ def create_xtreme_result(xtreme_root: Path, scene_name: str, frame_id: str, payl
     (result_dir / f"{frame_id}.json").write_text(json.dumps(payload), encoding="utf-8")
 
 
+def create_xtreme_data(xtreme_root: Path, scene_name: str, frame_id: str):
+    data_dir = xtreme_root / scene_name / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "name": frame_id,
+        "cameraConfig": {"filename": f"{frame_id}.json"},
+        "cameraImages": [{"filename": f"{frame_id}.png"}],
+        "lidarPointClouds": [{"filename": f"{frame_id}.pcd"}],
+    }
+    (data_dir / f"{frame_id}.json").write_text(json.dumps(payload), encoding="utf-8")
+
+
 def stub_external_effects(module, dataset_root: Path):
     def fake_pcd_to_bin(_pcd_path, bin_path):
         Path(bin_path).write_bytes(b"\x00" * 16)
@@ -164,6 +176,100 @@ def test_missing_xtreme_scene_is_treated_as_empty_label(tmp_path):
     label_files = read_output_labels(output_root)
     assert len(label_files) == 1
     assert label_files[0].read_text(encoding="utf-8") == ""
+
+
+def test_xtreme_data_manifest_matches_nearby_raw_timestamp(tmp_path):
+    module = load_merge_module()
+
+    raw_root = tmp_path / "raw"
+    xtreme_root = tmp_path / "xtreme"
+    output_root = tmp_path / "output"
+    raw_frame_id = "1710000000000001000"
+    xtreme_frame_id = "1710000000000001120"
+    scene_dir = raw_root / "data_record_20260414" / "Scene_01"
+
+    create_raw_frame(scene_dir, raw_frame_id, "raw-label\n")
+    create_xtreme_data(xtreme_root, "Scene_01", xtreme_frame_id)
+    create_xtreme_result(xtreme_root, "Scene_01", xtreme_frame_id)
+
+    module.RAW_ARCHIVE_ROOT = raw_root
+    module.XTREME_EXPORT_ROOT = xtreme_root
+    stub_external_effects(module, output_root)
+    module.MAX_EMPTY_LABEL_RATIO = 1.0
+    module.parse_xtreme_to_kitti_lines = lambda xtreme_json_path, _config_path: [
+        f"Car from_{Path(xtreme_json_path).stem}\n"
+    ]
+
+    module.build_final_dataset("unit_test")
+
+    label_files = read_output_labels(output_root)
+    assert [path.stem for path in label_files] == [raw_frame_id]
+    assert label_files[0].read_text(encoding="utf-8") == f"Car from_{xtreme_frame_id}\n"
+
+
+def test_raw_frame_missing_from_xtreme_data_manifest_is_skipped(tmp_path):
+    module = load_merge_module()
+
+    raw_root = tmp_path / "raw"
+    xtreme_root = tmp_path / "xtreme"
+    output_root = tmp_path / "output"
+    uploaded_frame_id = "1710000000000001000"
+    not_uploaded_frame_id = "1710000000500001000"
+    scene_dir = raw_root / "data_record_20260414" / "Scene_01"
+
+    create_raw_frame(scene_dir, uploaded_frame_id, "raw-label\n")
+    create_raw_frame(scene_dir, not_uploaded_frame_id, "raw-label\n")
+    create_xtreme_data(xtreme_root, "Scene_01", uploaded_frame_id)
+    create_xtreme_result(xtreme_root, "Scene_01", uploaded_frame_id)
+
+    module.RAW_ARCHIVE_ROOT = raw_root
+    module.XTREME_EXPORT_ROOT = xtreme_root
+    stub_external_effects(module, output_root)
+    module.MAX_EMPTY_LABEL_RATIO = 1.0
+    module.parse_xtreme_to_kitti_lines = lambda *_args, **_kwargs: [
+        "Car 0.00 0 0.00 0.00 0.00 10.00 10.00 1.00 1.00 1.00 0.00 0.00 10.00 0.00 0.00 0.00\n"
+    ]
+
+    module.build_final_dataset("unit_test")
+
+    label_files = read_output_labels(output_root)
+    assert [path.stem for path in label_files] == [uploaded_frame_id]
+
+
+def test_missing_scene_is_skipped_when_xtreme_export_has_data_manifest(tmp_path):
+    module = load_merge_module()
+
+    raw_root = tmp_path / "raw"
+    xtreme_root = tmp_path / "xtreme"
+    output_root = tmp_path / "output"
+    uploaded_frame_id = "1710000000000001000"
+    missing_scene_frame_id = "1710000000500001000"
+
+    create_raw_frame(
+        raw_root / "data_record_20260414" / "Scene_01",
+        uploaded_frame_id,
+        "raw-label\n",
+    )
+    create_raw_frame(
+        raw_root / "data_record_20260414" / "Scene_02",
+        missing_scene_frame_id,
+        "raw-label\n",
+    )
+    create_xtreme_data(xtreme_root, "Scene_01", uploaded_frame_id)
+    create_xtreme_result(xtreme_root, "Scene_01", uploaded_frame_id)
+
+    module.RAW_ARCHIVE_ROOT = raw_root
+    module.XTREME_EXPORT_ROOT = xtreme_root
+    stub_external_effects(module, output_root)
+    module.MAX_EMPTY_LABEL_RATIO = 1.0
+    module.parse_xtreme_to_kitti_lines = lambda *_args, **_kwargs: [
+        "Car 0.00 0 0.00 0.00 0.00 10.00 10.00 1.00 1.00 1.00 0.00 0.00 10.00 0.00 0.00 0.00\n"
+    ]
+
+    module.build_final_dataset("unit_test")
+
+    label_files = read_output_labels(output_root)
+    assert [path.stem for path in label_files] == [uploaded_frame_id]
 
 
 def test_empty_labels_are_globally_sampled_to_ten_percent(tmp_path):

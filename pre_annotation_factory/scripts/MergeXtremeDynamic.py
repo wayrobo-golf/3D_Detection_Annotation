@@ -5,6 +5,7 @@ import math
 import shutil
 import glob
 import random
+import bisect
 import numpy as np
 from pathlib import Path
 from datetime import datetime
@@ -21,10 +22,10 @@ except ImportError:
 
 # ================= 配置区 =================
 # 1. Xtreme1 导出的标注数据根目录 (解压后的 Scene_XX 所在目录)
-XTREME_EXPORT_ROOT = Path("/home/keyaoli/Data/AutoAnnotation/Xtreme/ExportFromXtreme/YeNan_20260318-20260417080245")
+XTREME_EXPORT_ROOT = Path("/home/keyaoli/Data/AutoAnnotation/Xtreme/ExportFromXtreme/BinJiang_20260319-20260509033817")
 
 # 2. 你的原始数据集归档目录 (_origin 后缀的那个文件夹)
-RAW_ARCHIVE_ROOT = Path("/home/keyaoli/Data/AutoAnnotation/Auto_Annotation_Origin/3DBox_Annotation_20260429120448_YeNan_20260318_origin")
+RAW_ARCHIVE_ROOT = Path("/home/keyaoli/Data/AutoAnnotation/Auto_Annotation_Origin/3DBox_Annotation_20260429145901_BinJiang_20260319_origin")
 
 # 3. 最终训练集输出目录
 FINAL_KITTI_OUTPUT_DIR = Path("/home/keyaoli/Data/AutoAnnotation/Wayrobo_KITTI_Dataset/Debug")
@@ -34,6 +35,7 @@ SPLIT_RATIO = 0.8         # 80% 训练集, 20% 验证集
 CONVERT_PCD_TO_BIN = True # 是否转换为 OpenPCDet 需要的 bin
 RANDOM_SEED = 42
 MAX_EMPTY_LABEL_RATIO = 0.10
+XTREME_TIMESTAMP_MATCH_TOLERANCE_NS = 1000
 
 # ================= 核心数学与转换工具 =================
 R_xtreme2kitti = np.array([
@@ -214,6 +216,91 @@ def compute_max_empty_frames(positive_count, max_empty_ratio):
 
     return int(math.floor((positive_count * max_empty_ratio) / (1.0 - max_empty_ratio)))
 
+
+def parse_numeric_stem(path):
+    try:
+        return int(Path(path).stem)
+    except ValueError:
+        return None
+
+
+def get_xtreme_frame_id_from_data(data_json_path):
+    with open(data_json_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    if data.get("name"):
+        return str(data["name"])
+
+    camera_config = data.get("cameraConfig") or {}
+    if camera_config.get("filename"):
+        return Path(camera_config["filename"]).stem
+
+    return data_json_path.stem
+
+
+def find_nearest_raw_frame_id(target_frame_id, raw_frame_ids, max_delta_ns):
+    target_timestamp = parse_numeric_stem(Path(f"{target_frame_id}.json"))
+    if target_timestamp is None:
+        return target_frame_id if target_frame_id in raw_frame_ids else None
+
+    numeric_raw_frames = []
+    for raw_frame_id in raw_frame_ids:
+        raw_timestamp = parse_numeric_stem(Path(f"{raw_frame_id}.json"))
+        if raw_timestamp is not None:
+            numeric_raw_frames.append((raw_timestamp, raw_frame_id))
+    if not numeric_raw_frames:
+        return None
+
+    numeric_raw_frames.sort()
+    raw_timestamps = [item[0] for item in numeric_raw_frames]
+    insert_idx = bisect.bisect_left(raw_timestamps, target_timestamp)
+    candidate_indices = [insert_idx]
+    if insert_idx > 0:
+        candidate_indices.append(insert_idx - 1)
+
+    best_match = None
+    for idx in candidate_indices:
+        if idx >= len(numeric_raw_frames):
+            continue
+        raw_timestamp, raw_frame_id = numeric_raw_frames[idx]
+        delta_ns = abs(raw_timestamp - target_timestamp)
+        if delta_ns <= max_delta_ns and (
+            best_match is None or delta_ns < best_match[0]
+        ):
+            best_match = (delta_ns, raw_frame_id)
+
+    return best_match[1] if best_match else None
+
+
+def build_xtreme_manifest_index(xtreme_scene_dir, raw_frame_ids):
+    data_dir = xtreme_scene_dir / "data"
+    data_json_paths = sorted(data_dir.glob("*.json"))
+    if not data_json_paths:
+        return None
+
+    raw_to_xtreme = {}
+    used_raw_frame_ids = set()
+    for data_json_path in data_json_paths:
+        xtreme_frame_id = get_xtreme_frame_id_from_data(data_json_path)
+        raw_frame_id = find_nearest_raw_frame_id(
+            xtreme_frame_id,
+            raw_frame_ids,
+            XTREME_TIMESTAMP_MATCH_TOLERANCE_NS,
+        )
+        if raw_frame_id is None:
+            continue
+        if raw_frame_id in used_raw_frame_ids:
+            continue
+
+        used_raw_frame_ids.add(raw_frame_id)
+        raw_to_xtreme[raw_frame_id] = {
+            "xtreme_frame_id": xtreme_frame_id,
+            "data_path": data_json_path,
+            "result_path": xtreme_scene_dir / "result" / f"{xtreme_frame_id}.json",
+        }
+
+    return raw_to_xtreme
+
 # ================= 编译流水线 =================
 def build_final_dataset(location_str):
     print(f"\n{'='*50}")
@@ -234,6 +321,8 @@ def build_final_dataset(location_str):
     scene_dirs = sorted(RAW_ARCHIVE_ROOT.glob("data_record_*/Scene_*"))
     scanned_tasks = []
     filtered_missing_tf_count = 0
+    skipped_not_in_xtreme_manifest_count = 0
+    xtreme_manifest_authoritative = any(XTREME_EXPORT_ROOT.glob("Scene_*/data/*.json"))
 
     for scene_dir in scene_dirs:
         scene_name = scene_dir.name
@@ -241,6 +330,12 @@ def build_final_dataset(location_str):
         has_xtreme_export = xtreme_scene_dir.exists()
         
         config_files = glob.glob(str(scene_dir / "camera_config" / "*.json"))
+        raw_frame_ids = {Path(config_path).stem for config_path in config_files}
+        xtreme_manifest_index = (
+            build_xtreme_manifest_index(xtreme_scene_dir, raw_frame_ids)
+            if has_xtreme_export
+            else None
+        )
         
         for config_path in config_files:
             frame_id = Path(config_path).stem
@@ -255,8 +350,24 @@ def build_final_dataset(location_str):
             if not pcd_path.exists(): continue
             
             raw_label_path = scene_dir / "label_2" / f"{frame_id}.txt"
-            xtreme_json_path = xtreme_scene_dir / "result" / f"{frame_id}.json"
-            if has_xtreme_export:
+            if xtreme_manifest_index is not None:
+                xtreme_match = xtreme_manifest_index.get(frame_id)
+                if xtreme_match is None:
+                    skipped_not_in_xtreme_manifest_count += 1
+                    continue
+
+                xtreme_json_path = xtreme_match["result_path"]
+                if xtreme_json_path.exists():
+                    label_source = "xtreme"
+                    target_label_path = xtreme_json_path
+                else:
+                    label_source = "empty_missing_json"
+                    target_label_path = None
+            elif xtreme_manifest_authoritative:
+                skipped_not_in_xtreme_manifest_count += 1
+                continue
+            elif has_xtreme_export:
+                xtreme_json_path = xtreme_scene_dir / "result" / f"{frame_id}.json"
                 if xtreme_json_path.exists():
                     label_source = "xtreme"
                     target_label_path = xtreme_json_path
@@ -381,6 +492,8 @@ def build_final_dataset(location_str):
         f"丢弃空标签: {dropped_empty_count}帧。"
     )
     print(f"ℹ️ 已过滤 {filtered_missing_tf_count} 帧缺 tf_lidar_to_map 数据。")
+    if skipped_not_in_xtreme_manifest_count:
+        print(f"ℹ️ 已跳过 {skipped_not_in_xtreme_manifest_count} 帧未出现在 Xtreme data 清单中的原始帧。")
     print(f"📊 划分情况 -> 训练集: {len(train_ids)}帧，验证集: {len(val_ids)}帧。")
     
     print(f"📦 正在打包最终极训练数据集 (ZIP)...")
